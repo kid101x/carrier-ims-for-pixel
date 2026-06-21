@@ -10,6 +10,7 @@
     <string name="tab_cooperation">合作</string>
     <string name="tab_about">关于</string>
     <string name="action_open">打开</string>
+    <string name="action_close">关闭</string>
 
     <!-- Main Screen -->
     <string name="system_info">系统信息</string>

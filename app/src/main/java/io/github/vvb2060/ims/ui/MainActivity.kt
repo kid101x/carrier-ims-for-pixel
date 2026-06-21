@@ -52,12 +52,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Cached
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -98,6 +100,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -2751,6 +2754,36 @@ private fun CommercialAd.imageContentScale(): ContentScale {
 }
 
 @Composable
+private fun DialogCloseButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(40.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .background(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                    shape = RoundedCornerShape(15.dp),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Close,
+                contentDescription = stringResource(R.string.action_close),
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
 private fun CommercialAdDialog(
     ad: CommercialAd,
     onOpen: () -> Unit,
@@ -2763,19 +2796,38 @@ private fun CommercialAdDialog(
         Card(
             modifier = Modifier.fillMaxWidth(0.96f),
             shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         ) {
             Column(
-                modifier = Modifier.padding(10.dp),
+                modifier = Modifier.padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (ad.imageUrl.isNotBlank()) {
-                    RemoteAdImage(
-                        ad = ad,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 640.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                    )
+                    val imageModifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 640.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .then(if (ad.actionUrl.isNotBlank()) Modifier.clickable(onClick = onOpen) else Modifier)
+                    Box {
+                        RemoteAdImage(
+                            ad = ad,
+                            modifier = imageModifier,
+                        )
+                        DialogCloseButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(6.dp),
+                        )
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        DialogCloseButton(onClick = onDismiss)
+                    }
                 }
                 if (ad.title.isNotBlank() || ad.body.isNotBlank()) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -2793,20 +2845,6 @@ private fun CommercialAdDialog(
                     lineHeight = 17.sp,
                     color = MaterialTheme.colorScheme.outline,
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text(stringResource(id = android.R.string.cancel))
-                    }
-                    if (ad.actionUrl.isNotBlank()) {
-                        TextButton(onClick = onOpen) {
-                            Text(ad.actionLabel.ifBlank { stringResource(R.string.action_open) })
-                        }
-                    }
-                }
             }
         }
     }
@@ -2818,49 +2856,70 @@ private fun SupportPaymentDialog(
     url: String,
     onDismiss: (String?) -> Unit,
 ) {
-    AlertDialog(
-        modifier = Modifier.fillMaxWidth(0.96f),
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    val dialogHeight = (LocalConfiguration.current.screenHeightDp.dp * 0.88f).coerceAtMost(720.dp)
+    Dialog(
         onDismissRequest = { onDismiss(null) },
-        title = { Text(stringResource(R.string.support_payment_page_title)) },
-        text = {
-            AndroidView(
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .height(dialogHeight),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        ) {
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(620.dp)
-                    .clip(RoundedCornerShape(12.dp)),
-                factory = { context ->
-                    WebView(context).apply {
-                        webViewClient = object : WebViewClient() {
-                            override fun shouldOverrideUrlLoading(
-                                view: WebView?,
-                                request: WebResourceRequest?,
-                            ): Boolean {
-                                val nextUrl = request?.url?.toString().orEmpty()
-                                if (SupportRules.isDodopayCheckoutCloseUrl(nextUrl)) {
-                                    onDismiss(SupportRules.extractDodopayPaymentProof(nextUrl))
-                                    return true
+                    .fillMaxSize()
+                    .padding(start = 8.dp, top = 6.dp, end = 8.dp, bottom = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.support_payment_page_title),
+                        modifier = Modifier.padding(start = 6.dp),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    DialogCloseButton(onClick = { onDismiss(null) })
+                }
+                AndroidView(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp)),
+                    factory = { context ->
+                        WebView(context).apply {
+                            webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(
+                                    view: WebView?,
+                                    request: WebResourceRequest?,
+                                ): Boolean {
+                                    val nextUrl = request?.url?.toString().orEmpty()
+                                    if (SupportRules.isDodopayCheckoutCloseUrl(nextUrl)) {
+                                        onDismiss(SupportRules.extractDodopayPaymentProof(nextUrl))
+                                        return true
+                                    }
+                                    return false
                                 }
-                                return false
                             }
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.loadWithOverviewMode = true
+                            settings.useWideViewPort = true
+                            loadUrl(url)
                         }
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.loadWithOverviewMode = true
-                        settings.useWideViewPort = true
-                        loadUrl(url)
-                    }
-                },
-                update = {},
-            )
-        },
-        confirmButton = {},
-        dismissButton = {
-            TextButton(onClick = { onDismiss(null) }) {
-                Text(stringResource(id = android.R.string.cancel))
+                    },
+                    update = {},
+                )
             }
-        },
-    )
+        }
+    }
 }
 
 @Composable
