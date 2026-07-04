@@ -560,13 +560,14 @@ class MainActivity : BaseActivity() {
         }
         LaunchedEffect(Unit) {
             configBackups = viewModel.loadConfigBackups()
-            if (!adFreeEnabled) {
-                commercialAds = viewModel.fetchCommercialAds().getOrDefault(emptyList())
-                homeAdToShow = commercialAds.firstOrNull {
-                    it.placement == AdPlacement.HOME_POPUP && viewModel.shouldShowHomeAd(it)
-                }
-                homeAdToShow?.let { viewModel.markHomeAdShown(it) }
-            }
+            // 调试期屏蔽首页浮窗广告：不拉取商业广告、不计算 homeAdToShow
+            // if (!adFreeEnabled) {
+            //     commercialAds = viewModel.fetchCommercialAds().getOrDefault(emptyList())
+            //     homeAdToShow = commercialAds.firstOrNull {
+            //         it.placement == AdPlacement.HOME_POPUP && viewModel.shouldShowHomeAd(it)
+            //     }
+            //     homeAdToShow?.let { viewModel.markHomeAdShown(it) }
+            // }
         }
         LaunchedEffect(selectedTab) {
             if (selectedTab != MainTab.SUPPORT || !viewModel.isDodopaySupportFeedConfigured()) {

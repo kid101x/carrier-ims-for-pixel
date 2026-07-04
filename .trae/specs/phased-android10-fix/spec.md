@@ -1,74 +1,88 @@
-# Android 10 分阶段可用性修复 Spec
+# Android 10 SIM 读取修复 Spec
 
 ## Why
 
-上一轮"避开 instrumentation"的修法是治标不治本：在 `LaunchedEffect` 里用 `SDK_INT >= UPSIDE_DOWN_CAKE` 守卫直接跳过 `queryCaptivePortalFixState` / `loadCurrentConfiguration` / `readImsRegistrationStatus`，结果 UI 看起来"就绪"但实际不读数据，SIM 列表也无法刷新——等同于把 Shizuku 状态"假装成就绪"而忽略功能落地。用户在 Android 10（Pixel 1 / marlin，API 29）上需要一个**真正可用**的 App：授权正常、UI 不闪退、SIM 能读、配置能应用。
+上一轮把 `readSimInfoList` 改为直接 Shizuku Binder 路径（`readSimInfoListViaBinder`）以避开 `startInstrumentation` 的 force-stop，方向正确。但真机测试显示：Shizuku 授权正常、UI 不闪退，**但 SIM 卡无法读取、刷新也不行**。
 
-根因回顾：
-- Android 10–13 上 `IActivityManager.startInstrumentation` 的 `flags=8`（`INSTR_FLAG_NO_RESTART`）不被识别 → force-stop 目标包（本 App）→ 杀掉 UI 进程与同进程的 `IInstrumentationWatcher` → 结果无法回传 → "授权后一闪即退"。
-- 6 个 privileged 文件中 `startDelegateShellPermissionIdentity` / `stopDelegateShellPermissionIdentity`（Android 11+ 才有）无 SDK_INT 守卫 → Android 10 上抛 `NoSuchMethodError`（被 catch 但功能失败）。
-- 浮窗广告在调试期无意义，且其网络拉取（`fetchCommercialAds`）会增加启动期变量与不确定性。
+根因（已确认）：**ISub 方法签名版本判断错误**。
+
+AOSP 中 `ISub.getActiveSubscriptionInfoList` 的签名按 Android 版本演进：
+
+| API 版本 | 签名 |
+|---------|------|
+| API 22 (Android 5.1) | `getActiveSubscriptionInfoList()` 无参 |
+| API 23 (Android 6) | `getActiveSubscriptionInfoList(String callingPackage)` 一参 |
+| **API 30 (Android 11, R)** | `getActiveSubscriptionInfoList(String, String)` 两参 |
+| API 34 (Android 14) | `getActiveSubscriptionInfoList(String, String, boolean)` 三参 |
+
+当前代码（`SimReader.kt:186-194`、`ShizukuProvider.kt:138-147`）的版本分支是：
+- `SDK_INT >= S` (31)：三参（正确，Android 12+）
+- `SDK_INT < S`（含 Android 10/11）：**反射两参 `(String, String)`**
+
+但两参签名是 **API 30 (Android 11)** 才加入的。Android 10 (API 29) 上只有**一参 `(String)`** 签名。因此在 Android 10 上反射找不到两参方法 → `NoSuchMethodException` → 被 catch → 返回 null → SIM 列表为空。
+
+次要问题：`READ_PHONE_STATE` 权限未声明。经 `ShizukuBinderWrapper` 路由到 Shizuku shell 进程后调用以 shell UID 执行，权限检查本身能通过；但声明该权限作为兜底（部分 ROM 的 ISub 实现会检查调用方包名对应的声明权限）更稳妥。
 
 ## What Changes
 
-### 阶段一：Shizuku 授权正确（不写死状态）
-- 保留现有 `updateShizukuStatus()` 实时检测逻辑（`pingBinder` + `checkSelfPermission`），不引入任何"默认 READY"的写死值。
-- 保留 `Shizuku.isPreV11()`、`NOT_RUNNING` / `NO_PERMISSION` / `NEED_UPDATE` / `READY` 四态真实反映。
-- UI 根据**真实**状态展示对应提示，授权前不得显示功能面板的"可用"态。
+### 修复一：ISub 方法签名三分支（核心修复）
+- `SimReader.readByISub` 和 `ShizukuProvider.readSimInfoListViaBinder` 的反射分支改为三分支：
+  - `SDK_INT >= UPSIDE_DOWN_CAKE` (34)：三参 `getActiveSubscriptionInfoList(String, String, boolean)`
+  - `SDK_INT >= R` (30)：两参 `getActiveSubscriptionInfoList(String, String)`（直接调 stub，无需反射）
+  - `SDK_INT < R`（Android 10 及以下）：**一参** `getActiveSubscriptionInfoList(String)`（反射调用）
+- `callingPackage` 参数传 `context.packageName`（非 null），避免 ISub 实现的包名校验拒绝。
 
-### 阶段二：UI 不闪退（不经 instrumentation 读 SIM）
-- `readSimInfoList` 在 `SDK_INT < UPSIDE_DOWN_CAKE` 时走**直接 Shizuku Binder** 调用 `ISub.getActiveSubscriptionInfoList`（已实现于 `readSimInfoListViaBinder`），不经 `startInstrumentation`，不触发 force-stop。
-- 该 Binder 路径必须真实执行：经 `ShizukuBinderWrapper` 路由到 Shizuku shell 进程，具备 shell 权限读取 SIM 列表。
-- SIM 列表刷新（手动/自动）在 Android 10 上必须能返回真实数据，而非被守卫跳过返回空。
-- **撤销**上一轮在 `MainActivity` 三个 `LaunchedEffect` 中粗暴跳过的写法：Captive Portal / CarrierConfig / IMS 状态在 Android 10 上改为**直接 Binder 路径**（不经 instrumentation），而非"跳过不读"。
+### 修复二：声明 READ_PHONE_STATE 权限（兜底）
+- `AndroidManifest.xml` 添加 `<uses-permission android:name="android.permission.READ_PHONE_STATE" />`。
+- 该权限为 dangerous，但经 ShizukuBinderWrapper 路由的调用以 shell UID 执行，无需用户运行时授权即可通过权限检查；声明是为了兜底部分 ROM 的包名-权限校验。
 
-### 阶段三：SIM 读取正常
-- `readSimInfoListViaBinder` 在 Android 10 上使用两参 `getActiveSubscriptionInfoList(String, String)`（反射调用），Android 12+ 用三参。
-- 复用 `SimReader.toRaw` 提取纯字段，结果不含 `SubscriptionInfo`/`Bitmap`/FD。
-- 失败时返回空列表并写日志（`readSimInfoListViaBinder: failed`），UI 显示"未读到 SIM"而非崩溃。
+### 修复三：增强 Binder 路径日志（便于真机诊断）
+- `readSimInfoListViaBinder` 在每个失败点写明确日志：service 不可用 / 反射找不到方法 / 调用抛异常 / 返回空列表，附带异常类型与消息。
 
-### 阶段四：功能落地可行（特权操作不经 instrumentation）
-- 为以下特权操作在 `SDK_INT < UPSIDE_DOWN_CAKE` 时提供**直接 Shizuku Binder** 替代路径（与 `readSimInfoListViaBinder` 同思路），不经 `startInstrumentation`：
-  - `overrideImsConfig`（ImsModifier）：写 IMS 配置
-  - `readCarrierConfig`（ConfigReader）：读 CarrierConfig
-  - `readImsRegistrationStatus`（ImsStatusReader）：读 IMS 注册状态
-  - `restartImsRegistration`（ImsResetter）：重置 IMS
-  - `applyApnConfig`（ApnModifier）：写 APN
-  - `queryCaptivePortalConfig` / `applyCaptivePortalCnUrls` / `restoreCaptivePortalDefaultUrls`（CaptivePortalFixer）：Captive Portal 修复
-- 同时修复 F-1：6 个 privileged 文件中 `startDelegateShellPermissionIdentity` / `stopDelegateShellPermissionIdentity` 加 `SDK_INT >= R` 守卫（Android 10 上跳过，instrumentation 本身已带 shell 权限）。
-- `ShizukuProvider.startInstrumentation` 的 `flags` 动态化：`val flags = if (SDK_INT >= UPSIDE_DOWN_CAKE) 8 else 0`（兜底，阶段四完成后理论上不再走该路径）。
-
-### 阶段五：屏蔽调试期浮窗广告
-- 屏蔽首页浮窗广告（`HOME_POPUP` 的 `CommercialAdDialog`）与启动期 `fetchCommercialAds` 网络拉取，**仅调试期**。
-- 实现方式：在 `MainActivity` 的 `LaunchedEffect(Unit)` 中跳过 `fetchCommercialAds` / `homeAdToShow` 计算，并跳过 `CommercialAdDialog` 渲染。
-- 保留 `CommercialAd` 数据模型与合作卡片（`COOPERATION_CARD`）代码，不删除；仅屏蔽启动浮窗的触发与渲染。
-- 不修改 `adFreeEnabled` 的真实判定逻辑（付款验证仍可用）。
+### 修复四：屏蔽调试期浮窗广告
+- 在 `MainActivity` 的 `LaunchedEffect(Unit)` 中跳过 `fetchCommercialAds` / `homeAdToShow` 计算（不发起网络请求）。
+- 跳过 `CommercialAdDialog` 渲染分支。
+- 保留 `CommercialAd` 数据模型与 `COOPERATION_CARD` 代码不删；不修改 `adFreeEnabled` 真实判定逻辑。
 
 ## Impact
 - Affected code:
-  - `app/src/main/java/io/github/vvb2060/ims/ShizukuProvider.kt`（核心：新增多个 Binder 替代路径、flags 动态化）
-  - `app/src/main/java/io/github/vvb2060/ims/privileged/ImsModifier.kt`、`ConfigReader.kt`、`ImsStatusReader.kt`、`ImsResetter.kt`、`ApnModifier.kt`、`CaptivePortalFixer.kt`、`BrokerInstrumentation.kt`（delegate 守卫）
-  - `app/src/main/java/io/github/vvb2060/ims/ui/MainActivity.kt`（撤销粗暴跳过、屏蔽广告浮窗）
-  - `app/src/main/java/io/github/vvb2060/ims/viewmodel/MainViewModel.kt`（Binder 路径透传）
-- 影响范围：Android 10–13 上的全部特权操作；Android 14+ 保持现有 instrumentation 路径不变。
-- **不**回滚用户对工作区的其他改动。
+  - `app/src/main/java/io/github/vvb2060/ims/privileged/SimReader.kt`（`readByISub` 三分支）
+  - `app/src/main/java/io/github/vvb2060/ims/ShizukuProvider.kt`（`readSimInfoListViaBinder` 三分支 + 日志）
+  - `app/src/main/AndroidManifest.xml`（READ_PHONE_STATE 权限）
+  - `app/src/main/java/io/github/vvb2060/ims/ui/MainActivity.kt`（屏蔽广告浮窗）
+- 影响范围：Android 10 (API 29) 的 SIM 读取；Android 11+ 与 Android 14+ 路径不变。
+- **不**回滚用户对工作区的其他改动；**不**改动上一轮已生效的"UI 不闪退"逻辑（MainActivity 的 `canAutoInstrument` 守卫保持，待 SIM 读取确认后再决定是否恢复自动查询其他状态）。
 
 ## ADDED Requirements
 
-### Requirement: 直接 Shizuku Binder 特权操作路径（Android < 14）
-The system SHALL 在 `Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE` 时，为以下特权操作提供不经 `startInstrumentation` 的直接 Shizuku Binder 调用路径：`readSimInfoList`、`overrideImsConfig`、`readCarrierConfig`、`readImsRegistrationStatus`、`restartImsRegistration`、`applyApnConfig`、`queryCaptivePortalConfig`、`applyCaptivePortalCnUrls`、`restoreCaptivePortalDefaultUrls`。
+### Requirement: ISub 方法签名按 Android 版本三分支
+The system SHALL 在调用 `ISub.getActiveSubscriptionInfoList` 时按 `Build.VERSION.SDK_INT` 选择正确签名：`>= UPSIDE_DOWN_CAKE` (34) 用三参、`>= R` (30) 用两参、`< R`（含 Android 10）用一参 `(String)`。
 
-#### Scenario: Android 10 上读取 SIM 列表不闪退
-- **WHEN** 用户在 Android 10 设备上授权 Shizuku 后打开 App
-- **THEN** UI 不闪退，SIM 列表通过直接 Binder 路径读取并真实显示
+#### Scenario: Android 10 反射一参签名成功
+- **WHEN** 在 Android 10 (API 29) 上调用 `readSimInfoListViaBinder`
+- **THEN** 反射找到一参 `getActiveSubscriptionInfoList(String)`，传入 `context.packageName`，返回真实 SIM 列表
 
-#### Scenario: Android 10 上读 IMS 注册状态
-- **WHEN** App 在 Android 10 上调用 `readImsRegistrationStatus(subId)`
-- **THEN** 经直接 Binder 路径返回真实布尔值，而非被守卫跳过返回 null
+#### Scenario: Android 11+ 直接调用两参 stub
+- **WHEN** `SDK_INT >= R` (30)
+- **THEN** 直接调用 stub 的两参 `getActiveSubscriptionInfoList(String, String)`，不反射
 
-#### Scenario: Android 14+ 保持原路径
-- **WHEN** `SDK_INT >= UPSIDE_DOWN_CAKE`
-- **THEN** 继续走 `startInstrumentation` 路径（`flags=8` 生效，不 force-stop）
+#### Scenario: Android 14+ 直接调用三参 stub
+- **WHEN** `SDK_INT >= UPSIDE_DOWN_CAKE` (34)
+- **THEN** 直接调用三参 `getActiveSubscriptionInfoList(String, String, boolean)`
+
+### Requirement: 声明 READ_PHONE_STATE 权限
+The system SHALL 在 `AndroidManifest.xml` 声明 `android.permission.READ_PHONE_STATE` 作为兜底，确保 ISub 调用的包名-权限校验通过。
+
+#### Scenario: Manifest 含 READ_PHONE_STATE
+- **WHEN** 检查 `AndroidManifest.xml`
+- **THEN** 包含 `<uses-permission android:name="android.permission.READ_PHONE_STATE" />`
+
+### Requirement: Binder 路径失败日志可诊断
+The system SHALL 在 `readSimInfoListViaBinder` 的每个失败点写明确日志（service 不可用 / 反射失败 / 调用异常 / 空列表），附异常类型与消息。
+
+#### Scenario: 反射失败日志
+- **WHEN** 反射找不到方法
+- **THEN** 日志含 `readSimInfoListViaBinder: failed` + 异常类名与消息，UI 返回空列表不崩溃
 
 ### Requirement: 调试期屏蔽首页浮窗广告
 The system SHALL 在调试期不拉取商业广告、不弹出首页 `HOME_POPUP` 浮窗 `CommercialAdDialog`。
@@ -80,21 +94,7 @@ The system SHALL 在调试期不拉取商业广告、不弹出首页 `HOME_POPUP
 ## MODIFIED Requirements
 
 ### Requirement: Shizuku 状态反映真实授权
-`updateShizukuStatus()` SHALL 实时检测 Shizuku binder 存活与权限授予，按 `NOT_RUNNING` / `NO_PERMISSION` / `NEED_UPDATE` / `READY` 真实反映；不得为绕过崩溃而将状态写死为 `READY`。
-
-#### Scenario: 未授权显示真实状态
-- **WHEN** Shizuku 未运行或未授权
-- **THEN** UI 显示 `NOT_RUNNING` / `NO_PERMISSION` / `NEED_UPDATE` 对应提示，不显示功能可用态
-
-### Requirement: startDelegateShellPermissionIdentity 版本守卫
-所有 privileged Instrumentation 子类 SHALL 在调用 `startDelegateShellPermissionIdentity` / `stopDelegateShellPermissionIdentity` 前用 `Build.VERSION.SDK_INT >= Build.VERSION_CODES.R` 守卫；Android 10 上跳过该调用（instrumentation 本身已带 shell 权限）。
-
-#### Scenario: Android 10 不抛 NoSuchMethodError
-- **WHEN** 在 Android 10 上运行任意 privileged Instrumentation
-- **THEN** 不调用 `startDelegateShellPermissionIdentity`，不抛 `NoSuchMethodError`，特权操作正常执行
+`updateShizukuStatus()` SHALL 实时检测 Shizuku binder 存活与权限授予，按 `NOT_RUNNING` / `NO_PERMISSION` / `NEED_UPDATE` / `READY` 真实反映；不得为绕过崩溃而将状态写死。现状已正确，本 spec 保持不变。
 
 ## REMOVED Requirements
-
-### Requirement: LaunchedEffect 粗暴跳过 instrumentation
-**Reason**: 上一轮在 `MainActivity` 三个 `LaunchedEffect` 中用 `canAutoInstrument = SDK_INT >= UPSIDE_DOWN_CAKE` 守卫直接跳过 `queryCaptivePortalFixState` / `loadCurrentConfiguration` / `readImsRegistrationStatus`，导致 UI 看似就绪但不读数据。改为阶段二的 Binder 替代路径，恢复真实数据读取。
-**Migration**: 删除 `canAutoInstrument` 守卫分支，改为在 ViewModel/Provider 层按 SDK_INT 选择 Binder 路径（数据真实返回），UI 层无需感知版本差异。
+（无）

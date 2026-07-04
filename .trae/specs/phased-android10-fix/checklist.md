@@ -1,20 +1,13 @@
-- [ ] `MainViewModel.updateShizukuStatus()` 仍按 `pingBinder` + `checkSelfPermission` 真实判定四态，无"默认 READY"写死
-- [ ] UI 在 `NOT_RUNNING` / `NO_PERMISSION` / `NEED_UPDATE` 态展示对应提示，授权前不显示功能可用态
-- [ ] `MainActivity` 三个 `LaunchedEffect` 的 `canAutoInstrument` / `SDK_INT >= UPSIDE_DOWN_CAKE` 粗暴跳过分支已删除，恢复真实调用
-- [ ] `ShizukuProvider.readSimInfoList` 在 `SDK_INT < UPSIDE_DOWN_CAKE` 时走 `readSimInfoListViaBinder` 直接 Binder 路径，返回真实 SIM 数据
-- [ ] `readSimInfoListViaBinder` 经 `ShizukuBinderWrapper` 路由，Android 10 反射两参 `getActiveSubscriptionInfoList(String, String)`，失败返回空列表 + 日志不崩溃
-- [ ] `overrideImsConfig` 在 Android < 14 走直接 Binder 路径，不经 `startInstrumentation`
-- [ ] `readCarrierConfig` 在 Android < 14 走直接 Binder 路径
-- [ ] `readImsRegistrationStatus` 在 Android < 14 走直接 Binder 路径，返回真实布尔值
-- [ ] `restartImsRegistration` 在 Android < 14 走直接 Binder 路径
-- [ ] `applyApnConfig` 在 Android < 14 走直接 Binder 路径
-- [ ] `queryCaptivePortalConfig` / `applyCaptivePortalCnUrls` / `restoreCaptivePortalDefaultUrls` 在 Android < 14 走直接 Binder 路径
-- [ ] 6 个 privileged 文件的 `startDelegateShellPermissionIdentity` / `stopDelegateShellPermissionIdentity` 加 `SDK_INT >= R` 守卫
-- [ ] `ShizukuProvider.startInstrumentation` 的 `flags` 动态化：`if (SDK_INT >= UPSIDE_DOWN_CAKE) 8 else 0`
-- [ ] `MainActivity.LaunchedEffect(Unit)` 中跳过 `fetchCommercialAds` / `homeAdToShow` 计算（不发起网络请求）
-- [ ] `CommercialAdDialog` 渲染分支跳过（启动无浮窗）
-- [ ] `CommercialAd` 数据模型与 `COOPERATION_CARD` 代码保留不删；`adFreeEnabled` 真实判定逻辑未改
-- [ ] `./gradlew :app:assembleDebug` 构建成功
-- [ ] `SimResultBundleTest` 单测全绿（无回归）
-- [ ] 产出 `app-debug.apk` 供真机测试
-- [ ] Android 14+ 保持现有 instrumentation 路径不变（`flags=8` 生效，不 force-stop）
+- [x] `SimReader.readByISub` 改三分支：`>= UPSIDE_DOWN_CAKE` 三参、`>= R` 两参（反射）、`< R` 一参反射
+- [x] `ShizukuProvider.readSimInfoListViaBinder` 同步改三分支（加 context 参数）
+- [x] `callingPackage` 参数传 `context.packageName`（非 null），Android 10 一参反射调用
+- [x] `AndroidManifest.xml` 含 `<uses-permission android:name="android.permission.READ_PHONE_STATE" />`
+- [x] `readSimInfoListViaBinder` 在 service 不可用 / 反射失败 / 调用异常 / 空列表各失败点有明确日志，附异常类型与消息
+- [x] `MainActivity.LaunchedEffect(Unit)` 跳过 `fetchCommercialAds` / `homeAdToShow` 计算（不发起网络请求）
+- [x] `CommercialAdDialog` 渲染分支跳过（`homeAdToShow` 恒为 null）
+- [x] `CommercialAd` 数据模型与 `COOPERATION_CARD` 代码保留不删；`adFreeEnabled` 真实判定逻辑未改
+- [x] `./gradlew :app:assembleDebug` 构建成功
+- [x] `SimResultBundleTest` 单测全绿（无回归）
+- [x] 产出 `app-debug.apk`（60M）供真机测试
+- [x] Android 11+ 两参路径不变（反射调用框架两参实现）
+- [x] Android 14+ 三参路径不变（`flags=8` 生效，不 force-stop）

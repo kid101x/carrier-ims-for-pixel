@@ -76,7 +76,7 @@ class ShizukuProvider : ShizukuProvider() {
             // 在这些版本上改用直接 Shizuku Binder 调用 ISub，不经 instrumentation，
             // 避免 force-stop，同时也不存在 FD 问题（不经过 finish() 回传）。
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                return readSimInfoListViaBinder()
+                return readSimInfoListViaBinder(context)
             }
             val result = startInstrumentation(context, SimReader::class.java, null, true)
             if (result == null) {
@@ -122,7 +122,7 @@ class ShizukuProvider : ShizukuProvider() {
          * 也不存在结果 Bundle 携带 FD 的问题。调用经 ShizukuBinderWrapper 路由到
          * Shizuku shell 进程，具备 shell 权限，足以读取 SIM 信息。
          */
-        private suspend fun readSimInfoListViaBinder(): List<SimSelection> =
+        private suspend fun readSimInfoListViaBinder(context: Context): List<SimSelection> =
             withContext(Dispatchers.IO) {
                 try {
                     val binder = ServiceManager.getService("isub")
@@ -131,19 +131,32 @@ class ShizukuProvider : ShizukuProvider() {
                         return@withContext emptyList()
                     }
                     val sub = ISub.Stub.asInterface(ShizukuBinderWrapper(binder))
-                    // Android 10/11: 两参 getActiveSubscriptionInfoList(String, String)
-                    // Android 12+:   三参 getActiveSubscriptionInfoList(String, String, boolean)
-                    // stub 只编了三参，Android 10/11 走反射调用两参签名。
+                    // ISub.getActiveSubscriptionInfoList 签名随版本演进：
+                    //   API 23 (M)  : 一参 (String)
+                    //   API 30 (R)  : 两参 (String, String)
+                    //   API 34 (U)  : 三参 (String, String, boolean)
+                    // 运行时框架的 ISub 被加载（父类加载器优先 + LSPass 绕过隐藏 API），
+                    // 故直接调 stub / 反射均落到框架真实实现与正确事务码上。
+                    // AIDL 不允许同名方法重载，stub 只编了三参；两参/一参签名走反射调用。
                     val rawList: List<SubscriptionInfo>? =
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                             sub.getActiveSubscriptionInfoList(null, null, true)
-                        } else {
+                        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                             val m = ISub::class.java.getMethod(
                                 "getActiveSubscriptionInfoList",
                                 String::class.java, String::class.java,
                             )
                             @Suppress("UNCHECKED_CAST")
                             m.invoke(sub, null, null) as? List<SubscriptionInfo>
+                        } else {
+                            // Android 10 (API 29) 及以下：仅有一参签名，反射调用并传入本包名，
+                            // 避免 ISub 实现的包名校验拒绝 null callingPackage。
+                            val m = ISub::class.java.getMethod(
+                                "getActiveSubscriptionInfoList",
+                                String::class.java,
+                            )
+                            @Suppress("UNCHECKED_CAST")
+                            m.invoke(sub, context.packageName) as? List<SubscriptionInfo>
                         }
                     if (rawList.isNullOrEmpty()) {
                         Log.i(TAG, "readSimInfoListViaBinder: empty list")
@@ -165,7 +178,11 @@ class ShizukuProvider : ShizukuProvider() {
                         )
                     }
                 } catch (t: Throwable) {
-                    Log.e(TAG, "readSimInfoListViaBinder: failed", t)
+                    Log.e(
+                        TAG,
+                        "readSimInfoListViaBinder: failed: ${t.javaClass.name}: ${t.message}",
+                        t,
+                    )
                     emptyList()
                 }
             }

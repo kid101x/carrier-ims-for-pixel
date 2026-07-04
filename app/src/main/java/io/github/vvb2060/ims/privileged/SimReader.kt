@@ -180,18 +180,31 @@ class SimReader : Instrumentation() {
             // 改用 ServiceManager.getService("isub") + ShizukuBinderWrapper。
             val binder = ServiceManager.getService("isub") ?: return null
             val sub = ISub.Stub.asInterface(ShizukuBinderWrapper(binder))
-            // 三参签名 getActiveSubscriptionInfoList(pkg, featureId, boolean) 仅 Android 12+ 有；
-            // Android 10/11 用两参 getActiveSubscriptionInfoList(String, String)。
-            // stub 只编了三参，故 Android 10/11 走反射调用两参签名，避免 NoSuchMethodError 噪声。
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // ISub.getActiveSubscriptionInfoList 签名随版本演进：
+            //   API 23 (M)  : 一参 (String)
+            //   API 30 (R)  : 两参 (String, String)
+            //   API 34 (U)  : 三参 (String, String, boolean)
+            // 运行时框架的 ISub 被加载（父类加载器优先 + LSPass 绕过隐藏 API），
+            // 故直接调 stub / 反射均落到框架真实实现与正确事务码上。
+            // AIDL 不允许同名方法重载，stub 只编了三参；两参/一参签名走反射调用。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 sub.getActiveSubscriptionInfoList(null, null, true)
-            } else {
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val m = ISub::class.java.getMethod(
                     "getActiveSubscriptionInfoList",
                     String::class.java, String::class.java,
                 )
                 @Suppress("UNCHECKED_CAST")
                 (m.invoke(sub, null, null) as? List<SubscriptionInfo>)
+            } else {
+                // Android 10 (API 29) 及以下：仅有一参签名，反射调用并传入本包名，
+                // 避免 ISub 实现的包名校验拒绝 null callingPackage。
+                val m = ISub::class.java.getMethod(
+                    "getActiveSubscriptionInfoList",
+                    String::class.java,
+                )
+                @Suppress("UNCHECKED_CAST")
+                (m.invoke(sub, context.packageName) as? List<SubscriptionInfo>)
             }
         } catch (e: Throwable) {
             Log.w(TAG, "readByISub failed, fallback to SubscriptionManager", e)
