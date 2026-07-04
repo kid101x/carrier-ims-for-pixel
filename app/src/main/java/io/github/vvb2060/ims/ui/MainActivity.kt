@@ -535,7 +535,11 @@ class MainActivity : BaseActivity() {
                 showShizukuUpdateDialog = true
             }
             pendingAutoSelectSimAfterReady = shizukuStatus == ShizukuStatus.READY
-            if (shizukuStatus == ShizukuStatus.READY) {
+            // Android < 14 上 startInstrumentation 会 force-stop 本包，不能在
+            // LaunchedEffect 里自动触发，否则 App 一授权就闪退。
+            if (shizukuStatus == ShizukuStatus.READY &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+            ) {
                 checkingCaptivePortalStatus = true
                 captivePortalFixState = viewModel.queryCaptivePortalFixState()
                 checkingCaptivePortalStatus = false
@@ -615,7 +619,10 @@ class MainActivity : BaseActivity() {
         LaunchedEffect(selectedSim, shizukuStatus, allSimList) {
             val currentSelected = selectedSim ?: return@LaunchedEffect
             committedFeatureSwitches.clear()
-            val currentConfig = if (shizukuStatus == ShizukuStatus.READY && currentSelected.subId >= 0) {
+            // Android < 14 上 startInstrumentation 会 force-stop 本包，不能自动触发。
+            val canAutoInstrument = shizukuStatus == ShizukuStatus.READY &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+            val currentConfig = if (canAutoInstrument && currentSelected.subId >= 0) {
                 viewModel.loadCurrentConfiguration(currentSelected.subId)
             } else {
                 null
@@ -638,7 +645,7 @@ class MainActivity : BaseActivity() {
             }
             if (currentSelected.subId >= 0) {
                 imsRegistrationStatusMap[currentSelected.subId] =
-                    if (shizukuStatus == ShizukuStatus.READY) {
+                    if (canAutoInstrument) {
                         viewModel.readImsRegistrationStatus(currentSelected.subId)
                     } else {
                         null
@@ -646,7 +653,7 @@ class MainActivity : BaseActivity() {
             } else {
                 allSimList.filter { it.subId >= 0 }.forEach { sim ->
                     imsRegistrationStatusMap[sim.subId] =
-                        if (shizukuStatus == ShizukuStatus.READY) {
+                        if (canAutoInstrument) {
                             viewModel.readImsRegistrationStatus(sim.subId)
                         } else {
                             null
