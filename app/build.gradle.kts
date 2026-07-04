@@ -46,7 +46,7 @@ fun configuredString(propertyName: String, environmentName: String, defaultValue
 
 kotlin {
     compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         optIn.add("androidx.compose.material3.ExperimentalMaterial3Api")
         optIn.add("androidx.compose.material3.ExperimentalMaterial3ExpressiveApi")
     }
@@ -153,8 +153,8 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
     buildFeatures {
         buildConfig = true
@@ -162,6 +162,22 @@ android {
     }
     lint {
         checkReleaseBuilds = false
+    }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+    tasks.withType<Test>().configureEach {
+        // Robolectric 的 MavenArtifactFetcher 在 TestWorker JVM 里直连 Maven 下载 android-all jar，
+        // 沙箱需走 HTTP 代理 127.0.0.1:18080 才能出网。把代理传给 TestWorker。
+        systemProperty("http.proxyHost", "127.0.0.1")
+        systemProperty("http.proxyPort", "18080")
+        systemProperty("https.proxyHost", "127.0.0.1")
+        systemProperty("https.proxyPort", "18080")
+        systemProperty("http.nonProxyHosts", "localhost|127.0.0.1")
+        // 指向阿里云 Maven 镜像，避免直连 Maven Central。
+        systemProperty("robolectric.mavenRepository.url", "https://maven.aliyun.com/repository/central")
     }
     dependenciesInfo {
         includeInApk = false
@@ -194,6 +210,7 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation(libs.org.json)
+    testImplementation(libs.robolectric)
 }
 
 apply(from = rootProject.file("signing.gradle"))

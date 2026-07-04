@@ -348,7 +348,13 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                 loadSimListInternal()
             }
             if (status == ShizukuStatus.READY) {
-                maybeRestoreSavedConfigurationAfterBoot()
+                // Android 10–13 上 startInstrumentation 会 force-stop 本包，自动恢复配置
+                // 会杀掉 UI 进程。改为跳过自动恢复，用户可手动重新应用配置。
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    maybeRestoreSavedConfigurationAfterBoot()
+                } else {
+                    Log.i(TAG, "skip auto restore on API ${Build.VERSION.SDK_INT}: instrumentation would force-stop app")
+                }
             }
         }
     }

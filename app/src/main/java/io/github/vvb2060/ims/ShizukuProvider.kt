@@ -6,10 +6,12 @@ import android.app.UiAutomationConnection
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.os.Build
 import android.os.Bundle
 import android.os.ServiceManager
 import android.telephony.SubscriptionInfo
 import android.util.Log
+import com.android.internal.telephony.ISub
 import io.github.vvb2060.ims.model.SimSelection
 import io.github.vvb2060.ims.model.ApnDraftConfig
 import io.github.vvb2060.ims.privileged.ApnModifier
@@ -22,6 +24,7 @@ import io.github.vvb2060.ims.privileged.ImsModifier
 import io.github.vvb2060.ims.privileged.SimReader
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -66,27 +69,106 @@ class ShizukuProvider : ShizukuProvider() {
         }
 
         suspend fun readSimInfoList(context: Context): List<SimSelection> {
+            // INSTR_FLAG_NO_RESTART（值 8）在 Android 14（API 34）才加入。
+            // Android 10–13 上 startInstrumentation 会 force-stop 目标包（即本 App），
+            // 杀死 UI 进程，IInstrumentationWatcher 也随之失效，结果无法回传——
+            // 表现为"打开 App 一闪即退"。
+            // 在这些版本上改用直接 Shizuku Binder 调用 ISub，不经 instrumentation，
+            // 避免 force-stop，同时也不存在 FD 问题（不经过 finish() 回传）。
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                return readSimInfoListViaBinder()
+            }
             val result = startInstrumentation(context, SimReader::class.java, null, true)
             if (result == null) {
                 Log.w(TAG, "readSimInfoList: failed with empty result")
                 return emptyList()
             }
-            val subList =
-                result.getParcelableArrayList(SimReader.BUNDLE_RESULT, SubscriptionInfo::class.java)
-            val resultList = subList?.map {
-                SimSelection(
-                    it.subscriptionId,
-                    it.displayName.toString(),
-                    it.carrierName.toString(),
-                    it.simSlotIndex,
-                    countryIso = it.countryIso ?: "",
-                    mcc = it.mccString ?: "",
-                    mnc = it.mncString ?: "",
-                    iccId = it.iccId ?: "",
+            // Android 10/11 上结果 Bundle 不能携带 SubscriptionInfo（含 Bitmap → FD），
+            // 否则 finishInstrumentation 会因 allowFds=false 静默失败。
+            // SimReader 已改为只回传基本类型字段，按同一套 key 重建 SimSelection。
+            val count = result.getInt(SimReader.BUNDLE_COUNT, 0)
+            if (count <= 0) {
+                val msg = result.getString(SimReader.BUNDLE_RESULT_MSG)
+                Log.w(TAG, "readSimInfoList: empty list" + (msg?.let { ": $it" } ?: ""))
+                return emptyList()
+            }
+            val resultList = ArrayList<SimSelection>(count)
+            for (i in 0 until count) {
+                val prefix = "${i}_"
+                val subId = result.getInt("${prefix}subId", -1)
+                val slot = result.getInt("${prefix}slot", -1)
+                val displayName = result.getString("${prefix}displayName") ?: ""
+                val carrierName = result.getString("${prefix}carrierName") ?: ""
+                resultList.add(
+                    SimSelection(
+                        subId = subId,
+                        displayName = displayName,
+                        carrierName = carrierName,
+                        simSlotIndex = slot,
+                        countryIso = result.getString("${prefix}countryIso") ?: "",
+                        mcc = result.getString("${prefix}mcc") ?: "",
+                        mnc = result.getString("${prefix}mnc") ?: "",
+                        iccId = result.getString("${prefix}iccId") ?: "",
+                    )
                 )
-            } ?: emptyList()
+            }
             return resultList
         }
+
+        /**
+         * 直接通过 Shizuku Binder 调用 ISub.getActiveSubscriptionInfoList 读取 SIM 列表。
+         *
+         * 不经 instrumentation，因此不会触发 force-stop（Android 10–13 的固有行为），
+         * 也不存在结果 Bundle 携带 FD 的问题。调用经 ShizukuBinderWrapper 路由到
+         * Shizuku shell 进程，具备 shell 权限，足以读取 SIM 信息。
+         */
+        private suspend fun readSimInfoListViaBinder(): List<SimSelection> =
+            withContext(Dispatchers.IO) {
+                try {
+                    val binder = ServiceManager.getService("isub")
+                    if (binder == null) {
+                        Log.w(TAG, "readSimInfoListViaBinder: isub service unavailable")
+                        return@withContext emptyList()
+                    }
+                    val sub = ISub.Stub.asInterface(ShizukuBinderWrapper(binder))
+                    // Android 10/11: 两参 getActiveSubscriptionInfoList(String, String)
+                    // Android 12+:   三参 getActiveSubscriptionInfoList(String, String, boolean)
+                    // stub 只编了三参，Android 10/11 走反射调用两参签名。
+                    val rawList: List<SubscriptionInfo>? =
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            sub.getActiveSubscriptionInfoList(null, null, true)
+                        } else {
+                            val m = ISub::class.java.getMethod(
+                                "getActiveSubscriptionInfoList",
+                                String::class.java, String::class.java,
+                            )
+                            @Suppress("UNCHECKED_CAST")
+                            m.invoke(sub, null, null) as? List<SubscriptionInfo>
+                        }
+                    if (rawList.isNullOrEmpty()) {
+                        Log.i(TAG, "readSimInfoListViaBinder: empty list")
+                        return@withContext emptyList()
+                    }
+                    Log.i(TAG, "readSimInfoListViaBinder: read sim info list size: ${rawList.size}")
+                    // 复用 SimReader.toRaw 提取纯字段，避免 SubscriptionInfo 的 Bitmap/FD
+                    rawList.map { info ->
+                        val raw = SimReader.toRaw(info)
+                        SimSelection(
+                            subId = raw.subId,
+                            displayName = raw.displayName ?: "",
+                            carrierName = raw.carrierName ?: "",
+                            simSlotIndex = raw.slot,
+                            countryIso = raw.countryIso ?: "",
+                            mcc = raw.mcc ?: "",
+                            mnc = raw.mnc ?: "",
+                            iccId = raw.iccId ?: "",
+                        )
+                    }
+                } catch (t: Throwable) {
+                    Log.e(TAG, "readSimInfoListViaBinder: failed", t)
+                    emptyList()
+                }
+            }
 
         suspend fun readCarrierConfig(
             context: Context,
