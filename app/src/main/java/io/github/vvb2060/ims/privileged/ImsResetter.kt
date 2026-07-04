@@ -73,8 +73,8 @@ class ImsResetter : Instrumentation() {
 
             for (id in subIds) {
                 val slotIndex = sub?.getSlotIndex(id) ?: 0
-                Log.i(TAG, "resetIms for subId $id slot $slotIndex (subSvc=${if (sub == null) "fallback" else "isub"})")
-                telephony.resetIms(slotIndex)
+                Log.i(TAG, "restart IMS for subId $id slot $slotIndex (subSvc=${if (sub == null) "fallback" else "isub"})")
+                restartImsForSlot(telephony, slotIndex)
             }
 
             result.putBoolean(BUNDLE_RESULT, true)
@@ -90,5 +90,22 @@ class ImsResetter : Instrumentation() {
         }
 
         finish(Activity.RESULT_OK, result)
+    }
+
+    private fun restartImsForSlot(telephony: ITelephony, slotIndex: Int) {
+        val enableDisableResult = runCatching {
+            telephony.disableIms(slotIndex)
+            Thread.sleep(750)
+            telephony.enableIms(slotIndex)
+        }
+        if (enableDisableResult.isSuccess) return
+
+        val legacyToggle = ITelephony::class.java.getMethod(
+            "setImsRegistrationState",
+            Boolean::class.javaPrimitiveType,
+        )
+        legacyToggle.invoke(telephony, false)
+        Thread.sleep(750)
+        legacyToggle.invoke(telephony, true)
     }
 }

@@ -620,10 +620,8 @@ class MainActivity : BaseActivity() {
         LaunchedEffect(selectedSim, shizukuStatus, allSimList) {
             val currentSelected = selectedSim ?: return@LaunchedEffect
             committedFeatureSwitches.clear()
-            // Android < 14 上 startInstrumentation 会 force-stop 本包，不能自动触发。
-            val canAutoInstrument = shizukuStatus == ShizukuStatus.READY &&
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
-            val currentConfig = if (canAutoInstrument && currentSelected.subId >= 0) {
+            val canReadPrivilegedState = shizukuStatus == ShizukuStatus.READY
+            val currentConfig = if (canReadPrivilegedState && currentSelected.subId >= 0) {
                 viewModel.loadCurrentConfiguration(currentSelected.subId)
             } else {
                 null
@@ -646,7 +644,7 @@ class MainActivity : BaseActivity() {
             }
             if (currentSelected.subId >= 0) {
                 imsRegistrationStatusMap[currentSelected.subId] =
-                    if (canAutoInstrument) {
+                    if (canReadPrivilegedState) {
                         viewModel.readImsRegistrationStatus(currentSelected.subId)
                     } else {
                         null
@@ -654,7 +652,7 @@ class MainActivity : BaseActivity() {
             } else {
                 allSimList.filter { it.subId >= 0 }.forEach { sim ->
                     imsRegistrationStatusMap[sim.subId] =
-                        if (canAutoInstrument) {
+                        if (canReadPrivilegedState) {
                             viewModel.readImsRegistrationStatus(sim.subId)
                         } else {
                             null

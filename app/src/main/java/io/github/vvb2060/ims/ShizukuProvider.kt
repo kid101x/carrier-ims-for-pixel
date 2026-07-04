@@ -439,10 +439,10 @@ class ShizukuProvider : ShizukuProvider() {
             sm.javaClass.getMethod("getActiveSubscriptionIdList").invoke(sm) as IntArray
 
         /**
-         * 通过 Shizuku Binder 直接调用 ICarrierConfig.overrideConfig 写 CarrierConfig。
+         * 通过 Shizuku Binder 直接调用 Android 10 的 ICarrierConfig.overrideConfig 写 CarrierConfig。
          *
-         * 复刻 ImsModifier 的核心逻辑：选 SIM、reset/preferPersistent 处理、persistent
-         * 失败回退非 persistent、三参 → 两参 overrideConfig 反射回退（Android 10 仅两参）。
+         * 复刻 ImsModifier 的核心逻辑：选 SIM、reset 处理、两参 overrideConfig。
+         * Android 10 接口没有 persistent 参数，preferPersistent 仅保留为上层兼容输入。
          * 失败时不回退 broker：broker 也走 instrumentation，存在同样的 force-stop 问题。
          */
         private suspend fun overrideImsConfigViaBinder(context: Context, data: Bundle): String? =
@@ -488,52 +488,18 @@ class ShizukuProvider : ShizukuProvider() {
             values: PersistableBundle?,
             preferPersistent: Boolean,
         ) {
-            if (!preferPersistent) {
-                invokeOverrideConfigViaBinder(iCarrierConfig, subId, values, persistent = false)
-                return
+            if (preferPersistent) {
+                Log.i(TAG, "applyOverrideConfigViaBinder: Android 10 ignores persistent override flag")
             }
-            try {
-                invokeOverrideConfigViaBinder(iCarrierConfig, subId, values, persistent = true)
-                Log.i(TAG, "applyOverrideConfigViaBinder: persistent success for subId=$subId")
-            } catch (persistentError: Throwable) {
-                Log.w(
-                    TAG,
-                    "applyOverrideConfigViaBinder: persistent failed for subId=$subId, fallback non-persistent",
-                    persistentError,
-                )
-                try {
-                    invokeOverrideConfigViaBinder(iCarrierConfig, subId, values, persistent = false)
-                    Log.i(TAG, "applyOverrideConfigViaBinder: fallback non-persistent success for subId=$subId")
-                } catch (fallbackError: Throwable) {
-                    fallbackError.addSuppressed(persistentError)
-                    throw fallbackError
-                }
-            }
+            invokeOverrideConfigViaBinder(iCarrierConfig, subId, values)
         }
 
         private fun invokeOverrideConfigViaBinder(
             iCarrierConfig: ICarrierConfigLoader,
             subId: Int,
             values: PersistableBundle?,
-            persistent: Boolean,
         ) {
-            // ICarrierConfigLoader.overrideConfig 签名随版本演进：
-            //   Android 11+ : overrideConfig(int, PersistableBundle, boolean)
-            //   Android 10  : overrideConfig(int, PersistableBundle)
-            // stub 只编了三参；直接调 stub 三参在 Android 10 上事务码不存在，会抛
-            // NoSuchMethodError（Error 而非 Exception），故catch 后回退两参反射。
-            try {
-                // 先试三参直接调用（Android 11+）
-                iCarrierConfig.overrideConfig(subId, values, persistent)
-            } catch (e: NoSuchMethodError) {
-                // Android 10 回退两参反射
-                val m = ICarrierConfigLoader::class.java.getMethod(
-                    "overrideConfig",
-                    Int::class.javaPrimitiveType,
-                    PersistableBundle::class.java,
-                )
-                m.invoke(iCarrierConfig, subId, values)
-            }
+            iCarrierConfig.overrideConfig(subId, values)
         }
 
         /**
@@ -550,7 +516,11 @@ class ShizukuProvider : ShizukuProvider() {
                     Log.w(TAG, "readCarrierConfigViaBinder: ICarrierConfig unavailable")
                     return@withContext null
                 }
-                val config = iCarrierConfig.getConfigForSubId(subId)
+                val config = getCarrierConfigForSubIdViaBinder(
+                    iCarrierConfig,
+                    subId,
+                    context.packageName,
+                )
                 if (config == null) {
                     Log.w(TAG, "readCarrierConfigViaBinder: null config for subId=$subId")
                     return@withContext null
@@ -576,7 +546,11 @@ class ShizukuProvider : ShizukuProvider() {
                         Log.w(TAG, "dumpCarrierConfigViaBinder: ICarrierConfig unavailable")
                         return@withContext null
                     }
-                    val config = iCarrierConfig.getConfigForSubId(subId)
+                    val config = getCarrierConfigForSubIdViaBinder(
+                        iCarrierConfig,
+                        subId,
+                        context.packageName,
+                    )
                         ?: return@withContext ""
                     buildConfigDumpText(config)
                 } catch (t: Throwable) {
@@ -611,7 +585,7 @@ class ShizukuProvider : ShizukuProvider() {
         }
 
         /**
-         * 通过 Shizuku Binder 直接调用 ITelephony.resetIms 重启 IMS 注册，复刻 ImsResetter 逻辑。
+         * 通过 Android 10 Pixel 1 实机存在的 ITelephony 方法重启 IMS 注册。
          */
         private suspend fun restartImsRegistrationViaBinder(context: Context, subId: Int): String? =
             withContext(Dispatchers.IO) {
@@ -633,7 +607,7 @@ class ShizukuProvider : ShizukuProvider() {
                             "restartImsRegistrationViaBinder: subId=$id slot=$slotIndex" +
                                 " (subSvc=${if (sub == null) "fallback" else "isub"})",
                         )
-                        telephony.resetIms(slotIndex)
+                        restartImsForSlotViaBinder(telephony, slotIndex)
                     }
                     null
                 } catch (t: Throwable) {
@@ -641,6 +615,31 @@ class ShizukuProvider : ShizukuProvider() {
                     t.message ?: t.javaClass.simpleName
                 }
             }
+
+        private fun getCarrierConfigForSubIdViaBinder(
+            iCarrierConfig: ICarrierConfigLoader,
+            subId: Int,
+            callingPackage: String,
+        ): PersistableBundle? {
+            return iCarrierConfig.getConfigForSubId(subId, callingPackage)
+        }
+
+        private fun restartImsForSlotViaBinder(telephony: ITelephony, slotIndex: Int) {
+            val enableDisableResult = runCatching {
+                telephony.disableIms(slotIndex)
+                Thread.sleep(750)
+                telephony.enableIms(slotIndex)
+            }
+            if (enableDisableResult.isSuccess) return
+
+            val legacyToggle = ITelephony::class.java.getMethod(
+                "setImsRegistrationState",
+                Boolean::class.javaPrimitiveType,
+            )
+            legacyToggle.invoke(telephony, false)
+            Thread.sleep(750)
+            legacyToggle.invoke(telephony, true)
+        }
 
         /**
          * 通过 contentResolver 直接写 APN，复刻 ApnModifier 的 ContentValues 构造与

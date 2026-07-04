@@ -38,6 +38,35 @@ cd /workspace && JAVA_HOME=/root/.local/share/mise/installs/java/17.0.2 \
 
 ## 修复历程（按时间倒序）
 
+### 第 6 轮（2026-07-05）— Pixel 1 Android 10 隐藏 Binder 签名修复
+
+**真机结论**：当前连接设备是 Pixel XL / marlin，Android 10 (SDK 29)，`service list` 显示：
+- `carrier_config: com.android.internal.telephony.ICarrierConfigLoader`
+- `phone: com.android.internal.telephony.ITelephony`
+- `isub: com.android.internal.telephony.ISub`
+
+从设备 `/system/framework/framework.jar` 解析到：
+- Android 10 的 `ITelephony` 没有 `resetIms(int)`，但有 `enableIms(int)`、`disableIms(int)`、`setImsRegistrationState(boolean)`、`isImsRegistered(int)`。
+- Android 10 的 `ICarrierConfigLoader.getConfigForSubId` 是两参 `(int, String)`。
+- Android 10 的 `ICarrierConfigLoader.overrideConfig` 是两参 `(int, PersistableBundle)`。
+
+**根因**：
+- IMS 注册状态开关报错 `No interface method resetIms(I)V...` 是因为代码直接调用了 Android 10 不存在的 `ITelephony.resetIms(int)`。
+- CarrierConfig 读回路径的 stub 签名与 Android 10 实机不一致，导致 UI 状态读取不可靠。
+- 主界面曾因规避 instrumentation force-stop 禁止 Android 10 自动读状态，但当前 direct Shizuku Binder 路径不会 force-stop，继续禁止会让 IMS 状态长时间显示关闭/未知。
+- 开关关闭时原逻辑省略 key，不写 `false`，可能让已有 override 保持旧值。
+
+**修复**：
+- `ICarrierConfigLoader.aidl` 改为 Android 10 实机签名：`getConfigForSubId(int, String)` 与 `overrideConfig(int, PersistableBundle)`。
+- `ITelephony.java` 补充 Android 10 实机存在的 `enableIms` / `disableIms` / `setImsRegistrationState`，并移除 Android 10 不存在的 `resetIms` 编译期声明，避免后续重新写出直接调用。
+- `ShizukuProvider.restartImsRegistrationViaBinder` 和 `ImsResetter` 移除直接 `telephony.resetIms(...)` 调用，改为 Android 10 实机存在的 `disableIms` + `enableIms`，再失败回退 `setImsRegistrationState(false/true)`。
+- `ImsModifier.buildBundle` 在关闭 VoLTE/VoWiFi/VT/UT/CrossSIM 时明确写入 `false`。
+- `MainActivity` 在 Shizuku READY 时允许 Android 10 直接 Binder 读取当前 CarrierConfig 和 IMS 注册状态。
+
+**文档**：`docs/plans/2026-07-05-pixel1-android10-binder-signature-fix.md`
+
+**验证状态**：本机没有完整 Android 开发环境，不在此机器构建 APK。已完成源码级静态核对；构建、安装和真机功能验收交给有完整 JDK/Android SDK/Gradle 环境的人执行。
+
 ### 第 5 轮（2026-07-04 11:43）— 修复 CarrierConfig Binder 类名错误
 
 **根因**：`ShizukuProvider.kt:414` 反射加载 `Class.forName("android.telephony.ICarrierConfig$Stub")`，但这个类名根本不存在。AOSP `carrier_config` 服务的真实接口名是 `com.android.internal.telephony.ICarrierConfigLoader`（经 `service list` 实测确认）。`ClassNotFoundException` 被 catch 后异常消息恰好是类名，UI 显示 `配置失败:android.telephony.ICarrierConfig$Stub`，所有依赖 CarrierConfig 的操作（VoLTE/WFC/VT 开关、读/dump CarrierConfig）全部失败。

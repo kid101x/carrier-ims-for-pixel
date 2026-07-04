@@ -20,7 +20,11 @@ public interface ITelephony extends android.os.IInterface {
 
     int getImsProvisioningInt(int subId, int key);
 
-    void resetIms(int slotIndex);
+    void enableIms(int slotIndex);
+
+    void disableIms(int slotIndex);
+
+    void setImsRegistrationState(boolean registered);
 
     boolean isImsRegistered(int subId);
 
