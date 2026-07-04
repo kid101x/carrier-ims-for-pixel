@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.vvb2060.ims.R
 import io.github.vvb2060.ims.model.CarrierProfile
+import io.github.vvb2060.ims.viewmodel.MainViewModel
 
 /**
  * 运营商配置页：列出三家运营商预设，按当前 SIM 自动匹配高亮，
