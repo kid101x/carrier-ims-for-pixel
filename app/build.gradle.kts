@@ -4,6 +4,10 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
 val namespaceName = "io.github.vvb2060.ims"
 val applicationIdName = "io.github.vvb2060.ims.pixel1"
 val gitVersionCode: Int = providers.exec {
@@ -187,6 +191,18 @@ android {
     androidResources {
         localeFilters.add("en")
         localeFilters.add("zh-rCN")
+    }
+    // 让 debug APK 输出文件名带 versionName + 构建时间，便于区分每次安装是否最新版
+    applicationVariants.all {
+        if (buildType.name == "debug") {
+            outputs.forEach { output ->
+                if (output is com.android.build.gradle.internal.api.ApkVariantOutputImpl) {
+                    val buildTime = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
+                    output.outputFileName =
+                        "app-${appVersionName}-b${gitVersionCode}-${buildTime}.apk"
+                }
+            }
+        }
     }
 }
 
