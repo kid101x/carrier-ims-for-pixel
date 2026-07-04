@@ -20,6 +20,7 @@ import android.telephony.CarrierConfigManager
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
 import android.util.Log
+import com.android.internal.telephony.ICarrierConfigLoader
 import com.android.internal.telephony.ISub
 import com.android.internal.telephony.ITelephony
 import io.github.vvb2060.ims.model.SimSelection
@@ -205,7 +206,7 @@ class ShizukuProvider : ShizukuProvider() {
                 } catch (t: Throwable) {
                     Log.e(
                         TAG,
-                        "readSimInfoListViaBinder: failed: ${t.javaClass.name}: ${t.message}",
+                        "readSimInfoListViaBinder: failed: ${t.javaClass.simpleName}: ${t.message ?: "(no message)"}",
                         t,
                     )
                     emptyList()
@@ -402,18 +403,16 @@ class ShizukuProvider : ShizukuProvider() {
         // （后者本身是 Android 11+ 才有的 API）。
 
         /**
-         * 通过 ShizukuBinderWrapper 路由 ICarrierConfig binder（Android 10 上隐藏 AIDL）。
-         * 反射调用 Stub.asInterface，避免依赖编译期不存在的 ICarrierConfig stub 类。
+         * 通过 ShizukuBinderWrapper 路由 ICarrierConfigLoader binder（Android 10 上隐藏 AIDL）。
+         * carrier_config 服务的真实接口名为 com.android.internal.telephony.ICarrierConfigLoader，
+         * 已有 stub，直接调用 Stub.asInterface，无需反射。
          */
-        private fun getICarrierConfigViaShizuku(): Any? {
+        private fun getICarrierConfigViaShizuku(): ICarrierConfigLoader? {
             val binder = ServiceManager.getService("carrier_config") ?: run {
                 Log.w(TAG, "getICarrierConfigViaShizuku: carrier_config service unavailable")
                 return null
             }
-            val wrapped = ShizukuBinderWrapper(binder)
-            val stubClass = Class.forName("android.telephony.ICarrierConfig\$Stub")
-            val asInterface = stubClass.getMethod("asInterface", IBinder::class.java)
-            return asInterface.invoke(null, wrapped)
+            return ICarrierConfigLoader.Stub.asInterface(ShizukuBinderWrapper(binder))
         }
 
         private fun getITelephonyViaShizuku(): ITelephony? {
@@ -478,13 +477,13 @@ class ShizukuProvider : ShizukuProvider() {
                     }
                     null
                 } catch (t: Throwable) {
-                    Log.e(TAG, "overrideImsConfigViaBinder: failed: ${t.javaClass.name}: ${t.message}", t)
+                    Log.e(TAG, "overrideImsConfigViaBinder: failed: ${t.javaClass.simpleName}: ${t.message ?: "(no message)"}", t)
                     t.message ?: t.javaClass.simpleName
                 }
             }
 
         private fun applyOverrideConfigViaBinder(
-            iCarrierConfig: Any,
+            iCarrierConfig: ICarrierConfigLoader,
             subId: Int,
             values: PersistableBundle?,
             preferPersistent: Boolean,
@@ -513,27 +512,27 @@ class ShizukuProvider : ShizukuProvider() {
         }
 
         private fun invokeOverrideConfigViaBinder(
-            iCarrierConfig: Any,
+            iCarrierConfig: ICarrierConfigLoader,
             subId: Int,
             values: PersistableBundle?,
             persistent: Boolean,
         ) {
-            // ICarrierConfig.overrideConfig 签名随版本演进：
+            // ICarrierConfigLoader.overrideConfig 签名随版本演进：
             //   Android 11+ : overrideConfig(int, PersistableBundle, boolean)
             //   Android 10  : overrideConfig(int, PersistableBundle)
+            // stub 只编了三参；直接调 stub 三参在 Android 10 上事务码不存在，会抛
+            // NoSuchMethodError（Error 而非 Exception），故catch 后回退两参反射。
             try {
-                iCarrierConfig.javaClass.getMethod(
+                // 先试三参直接调用（Android 11+）
+                iCarrierConfig.overrideConfig(subId, values, persistent)
+            } catch (e: NoSuchMethodError) {
+                // Android 10 回退两参反射
+                val m = ICarrierConfigLoader::class.java.getMethod(
                     "overrideConfig",
                     Int::class.javaPrimitiveType,
                     PersistableBundle::class.java,
-                    Boolean::class.javaPrimitiveType,
-                ).invoke(iCarrierConfig, subId, values, persistent)
-            } catch (_: NoSuchMethodException) {
-                iCarrierConfig.javaClass.getMethod(
-                    "overrideConfig",
-                    Int::class.javaPrimitiveType,
-                    PersistableBundle::class.java,
-                ).invoke(iCarrierConfig, subId, values)
+                )
+                m.invoke(iCarrierConfig, subId, values)
             }
         }
 
@@ -551,9 +550,7 @@ class ShizukuProvider : ShizukuProvider() {
                     Log.w(TAG, "readCarrierConfigViaBinder: ICarrierConfig unavailable")
                     return@withContext null
                 }
-                val config = iCarrierConfig.javaClass
-                    .getMethod("getConfigForSubId", Int::class.javaPrimitiveType)
-                    .invoke(iCarrierConfig, subId) as? PersistableBundle
+                val config = iCarrierConfig.getConfigForSubId(subId)
                 if (config == null) {
                     Log.w(TAG, "readCarrierConfigViaBinder: null config for subId=$subId")
                     return@withContext null
@@ -564,7 +561,7 @@ class ShizukuProvider : ShizukuProvider() {
                 }
                 values
             } catch (t: Throwable) {
-                Log.e(TAG, "readCarrierConfigViaBinder: failed: ${t.javaClass.name}: ${t.message}", t)
+                Log.e(TAG, "readCarrierConfigViaBinder: failed: ${t.javaClass.simpleName}: ${t.message ?: "(no message)"}", t)
                 null
             }
         }
@@ -579,13 +576,11 @@ class ShizukuProvider : ShizukuProvider() {
                         Log.w(TAG, "dumpCarrierConfigViaBinder: ICarrierConfig unavailable")
                         return@withContext null
                     }
-                    val config = iCarrierConfig.javaClass
-                        .getMethod("getConfigForSubId", Int::class.javaPrimitiveType)
-                        .invoke(iCarrierConfig, subId) as? PersistableBundle
+                    val config = iCarrierConfig.getConfigForSubId(subId)
                         ?: return@withContext ""
                     buildConfigDumpText(config)
                 } catch (t: Throwable) {
-                    Log.e(TAG, "dumpCarrierConfigViaBinder: failed: ${t.javaClass.name}: ${t.message}", t)
+                    Log.e(TAG, "dumpCarrierConfigViaBinder: failed: ${t.javaClass.simpleName}: ${t.message ?: "(no message)"}", t)
                     null
                 }
             }
@@ -610,7 +605,7 @@ class ShizukuProvider : ShizukuProvider() {
                 Log.i(TAG, "readImsRegistrationStatusViaBinder: subId=$subId registered=$isRegistered")
                 isRegistered
             } catch (t: Throwable) {
-                Log.e(TAG, "readImsRegistrationStatusViaBinder: failed: ${t.javaClass.name}: ${t.message}", t)
+                Log.e(TAG, "readImsRegistrationStatusViaBinder: failed: ${t.javaClass.simpleName}: ${t.message ?: "(no message)"}", t)
                 null
             }
         }
@@ -642,7 +637,7 @@ class ShizukuProvider : ShizukuProvider() {
                     }
                     null
                 } catch (t: Throwable) {
-                    Log.e(TAG, "restartImsRegistrationViaBinder: failed: ${t.javaClass.name}: ${t.message}", t)
+                    Log.e(TAG, "restartImsRegistrationViaBinder: failed: ${t.javaClass.simpleName}: ${t.message ?: "(no message)"}", t)
                     t.message ?: t.javaClass.simpleName
                 }
             }
@@ -661,7 +656,7 @@ class ShizukuProvider : ShizukuProvider() {
                 applyApnConfigViaBinderInternal(context, subId, config)
                 null
             } catch (t: Throwable) {
-                Log.e(TAG, "applyApnConfigViaBinder: failed: ${t.javaClass.name}: ${t.message}", t)
+                Log.e(TAG, "applyApnConfigViaBinder: failed: ${t.javaClass.simpleName}: ${t.message ?: "(no message)"}", t)
                 t.message ?: t.javaClass.simpleName
             }
         }
@@ -761,7 +756,7 @@ class ShizukuProvider : ShizukuProvider() {
                     val https = Settings.Global.getString(resolver, KEY_CAPTIVE_PORTAL_HTTPS_URL).orEmpty()
                     fillCaptivePortalState(http, https)
                 } catch (t: Throwable) {
-                    Log.e(TAG, "queryCaptivePortalConfigViaBinder: failed: ${t.javaClass.name}: ${t.message}", t)
+                    Log.e(TAG, "queryCaptivePortalConfigViaBinder: failed: ${t.javaClass.simpleName}: ${t.message ?: "(no message)"}", t)
                     null
                 }
             }
@@ -785,7 +780,7 @@ class ShizukuProvider : ShizukuProvider() {
                         null
                     }
                 } catch (t: Throwable) {
-                    Log.e(TAG, "applyCaptivePortalCnUrlsViaBinder: failed: ${t.javaClass.name}: ${t.message}", t)
+                    Log.e(TAG, "applyCaptivePortalCnUrlsViaBinder: failed: ${t.javaClass.simpleName}: ${t.message ?: "(no message)"}", t)
                     t.message ?: t.javaClass.simpleName
                 }
             }
@@ -808,7 +803,7 @@ class ShizukuProvider : ShizukuProvider() {
                         null
                     }
                 } catch (t: Throwable) {
-                    Log.e(TAG, "restoreCaptivePortalDefaultUrlsViaBinder: failed: ${t.javaClass.name}: ${t.message}", t)
+                    Log.e(TAG, "restoreCaptivePortalDefaultUrlsViaBinder: failed: ${t.javaClass.simpleName}: ${t.message ?: "(no message)"}", t)
                     t.message ?: t.javaClass.simpleName
                 }
             }

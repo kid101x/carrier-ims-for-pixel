@@ -1,0 +1,13 @@
+- [x] `stub/src/main/aidl/com/android/internal/telephony/ICarrierConfigLoader.aidl` 存在，含 `getConfigForSubId(int)` 与三参 `overrideConfig(int, in PersistableBundle, boolean)`
+- [x] stub 模块编译通过（`:stub:compileDebugAidl` BUILD SUCCESSFUL）
+- [x] `ShizukuProvider.kt` import 含 `com.android.internal.telephony.ICarrierConfigLoader`
+- [x] `getICarrierConfigViaShizuku()` 返回 `ICarrierConfigLoader?`，用 `ICarrierConfigLoader.Stub.asInterface(ShizukuBinderWrapper(binder))`，不再用 `Class.forName("android.telephony.ICarrierConfig$Stub")`
+- [x] `invokeOverrideConfigViaBinder` 先试三参 stub 调用，`NoSuchMethodError` 回退两参反射
+- [x] `readCarrierConfigViaBinder` 用 stub `getConfigForSubId(subId)` 返回 `PersistableBundle`
+- [x] `dumpCarrierConfigViaBinder` 用 stub `getConfigForSubId`
+- [x] 所有 ViaBinder catch 块错误消息为 `"${t.javaClass.simpleName}: ${t.message ?: "(no message)"}"` 格式
+- [x] `Log.e(TAG, "xxxViaBinder: failed: ...", t)` 仍记录完整堆栈
+- [x] `./gradlew :app:assembleDebug :app:testDebugUnitTest` 构建成功且 SimResultBundleTest 单测全绿
+- [x] APK 输出文件名带版本+时间戳（`app-4.0.0-pixel1-b9-20260704-1142.apk`）
+- [x] Android 14+ instrumentation 路径不受影响（仍走 ImsModifier/ConfigReader）
+- [x] 代码中无残留 `android.telephony.ICarrierConfig` 字符串引用
