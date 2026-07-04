@@ -5,7 +5,7 @@ plugins {
 }
 
 val namespaceName = "io.github.vvb2060.ims"
-val applicationIdName = "io.github.vvb2060.ims.mod"
+val applicationIdName = "io.github.vvb2060.ims.pixel1"
 val gitVersionCode: Int = providers.exec {
     commandLine(
         "git",
@@ -119,6 +119,7 @@ android {
         )
         ndk {
             abiFilters.add("arm64-v8a")
+            abiFilters.add("armeabi-v7a")
         }
     }
     packaging {

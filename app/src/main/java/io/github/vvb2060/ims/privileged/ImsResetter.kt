@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.os.ServiceManager
 import android.system.Os
 import android.telephony.SubscriptionManager
-import android.telephony.TelephonyFrameworkInitializer
 import android.util.Log
 import com.android.internal.telephony.ISub
 import com.android.internal.telephony.ITelephony
@@ -50,26 +49,31 @@ class ImsResetter : Instrumentation() {
                 intArrayOf(subId)
             }
 
-            val telephony = ITelephony.Stub.asInterface(
-                ShizukuBinderWrapper(
-                    TelephonyFrameworkInitializer
-                        .getTelephonyServiceManager()
-                        .getTelephonyServiceRegisterer()
-                        .get()!!
-                )
-            )
-            val sub = ISub.Stub.asInterface(
-                ShizukuBinderWrapper(
-                    TelephonyFrameworkInitializer
-                        .getTelephonyServiceManager()
-                        .getSubscriptionServiceRegisterer()
-                        .get()!!
-                )
-            )
+            // Android 10 没有 TelephonyFrameworkInitializer.getTelephonyServiceManager()，
+            // 改用 ServiceManager.getService(...) + ShizukuBinderWrapper。
+            val phoneBinder = ServiceManager.getService(Context.TELEPHONY_SERVICE)
+            if (phoneBinder == null) {
+                Log.e(TAG, "TELEPHONY_SERVICE binder is null")
+                result.putBoolean(BUNDLE_RESULT, false)
+                result.putString(BUNDLE_RESULT_MSG, "telephony service unavailable")
+                finish(Activity.RESULT_OK, result)
+                return
+            }
+            val telephony = ITelephony.Stub.asInterface(ShizukuBinderWrapper(phoneBinder))
+            if (telephony == null) {
+                Log.e(TAG, "ITelephony asInterface returned null")
+                result.putBoolean(BUNDLE_RESULT, false)
+                result.putString(BUNDLE_RESULT_MSG, "ITelephony unavailable")
+                finish(Activity.RESULT_OK, result)
+                return
+            }
+            // Android 10 的 isub 服务名为 "isub"（与 11+ 一致），不存在时回退到 slotIndex=0。
+            val subBinder = ServiceManager.getService("isub")
+            val sub = subBinder?.let { ISub.Stub.asInterface(ShizukuBinderWrapper(it)) }
 
             for (id in subIds) {
-                val slotIndex = sub.getSlotIndex(id)
-                Log.i(TAG, "resetIms for subId $id slot $slotIndex")
+                val slotIndex = sub?.getSlotIndex(id) ?: 0
+                Log.i(TAG, "resetIms for subId $id slot $slotIndex (subSvc=${if (sub == null) "fallback" else "isub"})")
                 telephony.resetIms(slotIndex)
             }
 

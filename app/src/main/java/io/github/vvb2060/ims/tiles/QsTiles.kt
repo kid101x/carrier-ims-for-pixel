@@ -172,14 +172,6 @@ class SIM1VoLTETileService : BaseVoLTETileService() {
     override val simSlotIndex: Int = 0
 }
 
-class SIM2VoLTETileService : BaseVoLTETileService() {
-    override val simSlotIndex: Int = 1
-}
-
 class SIM1IMSStatusTileService : BaseIMSStatusTileService() {
     override val simSlotIndex: Int = 0
-}
-
-class SIM2IMSStatusTileService : BaseIMSStatusTileService() {
-    override val simSlotIndex: Int = 1
 }

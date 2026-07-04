@@ -34,6 +34,9 @@ import io.github.vvb2060.ims.model.SupportRecord
 import io.github.vvb2060.ims.model.SupportRules
 import io.github.vvb2060.ims.model.SystemInfo
 import io.github.vvb2060.ims.privileged.ImsModifier
+import io.github.vvb2060.ims.privileged.ImsStatusReader
+import android.telephony.CarrierConfigManager
+import io.github.vvb2060.ims.model.CarrierProfile
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -63,6 +66,59 @@ import rikka.shizuku.Shizuku
 class MainViewModel(private val application: Application) : AndroidViewModel(application) {
     companion object {
         private const val TAG = "MainViewModel"
+
+        /**
+         * 静态入口：基于 [CarrierProfile] 写入 CarrierConfig + APN 并回读校验。
+         * 供 [CarrierProfileViewModel] 直接复用，无需持有 MainViewModel 实例。
+         */
+        suspend fun applyCarrierProfile(
+            app: Application,
+            profile: CarrierProfile,
+            subId: Int,
+        ): ProfileApplyResult {
+            if (subId < 0) {
+                return ProfileApplyResult(false, false, false, null, null, "invalid subId")
+            }
+            val flags = app.applicationInfo.flags
+            val canUsePersistent = (flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
+                (flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+            val bundle = ImsModifier.buildBundle(
+                profile = profile,
+                enableVoLTE = true,
+                enableVoWiFi = true,
+                enableVT = true,
+                enableUT = true,
+                enableCrossSIM = false,
+            )
+            bundle.putInt(ImsModifier.BUNDLE_SELECT_SIM_ID, subId)
+            bundle.putBoolean(ImsModifier.BUNDLE_PREFER_PERSISTENT, canUsePersistent)
+            val imsError = ShizukuProvider.overrideImsConfig(app, bundle)
+            if (imsError != null) {
+                Log.w(TAG, "applyCarrierProfile: overrideImsConfig failed: $imsError")
+                return ProfileApplyResult(false, false, false, null, null, imsError)
+            }
+            val apnDataError = ShizukuProvider.applyApnConfig(app, subId, profile.dataApn)
+            val apnImsError = ShizukuProvider.applyApnConfig(app, subId, profile.imsApn)
+            val readback = runCatching {
+                ShizukuProvider.readCarrierConfig(
+                    app,
+                    subId,
+                    arrayOf(CarrierConfigManager.KEY_CARRIER_VOLTE_AVAILABLE_BOOL),
+                )
+            }.getOrNull()
+            val volteAvailable = readback
+                ?.getBoolean(CarrierConfigManager.KEY_CARRIER_VOLTE_AVAILABLE_BOOL, false) ?: false
+            val vowifiPlatform = ImsStatusReader.isWfcEnabledByPlatform(app, subId)
+            Log.i(TAG, "applyCarrierProfile: subId=$subId volte=$volteAvailable vowifi=$vowifiPlatform")
+            return ProfileApplyResult(
+                success = true,
+                volteAvailable = volteAvailable,
+                vowifiPlatformAvailable = vowifiPlatform,
+                apnDataError = apnDataError,
+                apnImsError = apnImsError,
+                errorMessage = null,
+            )
+        }
         private const val RUNTIME_PREFS = "runtime_state"
         private const val AD_PREFS = "ad_state"
         private const val CONFIG_BACKUP_PREFS = "config_backups"
@@ -134,6 +190,19 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         (flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
             (flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
     }
+
+    private val _vowifiPlatformAvailable = MutableStateFlow(true)
+    val vowifiPlatformAvailable: StateFlow<Boolean> = _vowifiPlatformAvailable.asStateFlow()
+
+    /** 运营商预设应用结果（CarrierConfig + APN 写入 + 回读校验 + VoWiFi 平台能力检测）。 */
+    data class ProfileApplyResult(
+        val success: Boolean,
+        val volteAvailable: Boolean,
+        val vowifiPlatformAvailable: Boolean,
+        val apnDataError: String?,
+        val apnImsError: String?,
+        val errorMessage: String?,
+    )
 
     private fun normalizeMcc(raw: String): String {
         return raw.filter { it.isDigit() }.take(3)
@@ -211,7 +280,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         map: Map<Feature, FeatureValue>,
     ): String? {
         if (selectedSim.subId < 0) return null
-        val enableTikTokFix = (map[Feature.TIKTOK_NETWORK_FIX]?.data as? Boolean) == true
+        val enableTikTokFix = false
         return resolveCountryIsoOverrideForApply(selectedSim, enableTikTokFix)
     }
 
@@ -396,7 +465,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     ): String? {
         // 构建传递给底层 ImsModifier 的配置 Bundle
         val carrierName: String? = null
-        val enableTikTokFix = (map[Feature.TIKTOK_NETWORK_FIX]?.data ?: false) as Boolean
+        val enableTikTokFix = false
         val countryISO =
             if (selectedSim.subId == -1) null else resolveCountryIsoOverrideForApply(
                 selectedSim,
@@ -410,13 +479,8 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         val enableVoLTE = (map[Feature.VOLTE]?.data ?: true) as Boolean
         val enableVoWiFi = (map[Feature.VOWIFI]?.data ?: true) as Boolean
         val enableVT = (map[Feature.VT]?.data ?: true) as Boolean
-        val enableVoNR = (map[Feature.VONR]?.data ?: true) as Boolean
         val enableCrossSIM = (map[Feature.CROSS_SIM]?.data ?: true) as Boolean
         val enableUT = (map[Feature.UT]?.data ?: true) as Boolean
-        val enable5GNR = (map[Feature.FIVE_G_NR]?.data ?: true) as Boolean
-        val enable5GThreshold = (map[Feature.FIVE_G_THRESHOLDS]?.data ?: true) as Boolean
-        val enable5GPlusIcon = (map[Feature.FIVE_G_PLUS_ICON]?.data ?: true) as Boolean
-        val enableShow4GForLTE = (map[Feature.SHOW_4G_FOR_LTE]?.data ?: false) as Boolean
 
         val bundle = ImsModifier.buildBundle(
             carrierName,
@@ -426,13 +490,8 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             enableVoLTE,
             enableVoWiFi,
             enableVT,
-            enableVoNR,
             enableCrossSIM,
             enableUT,
-            enable5GNR,
-            enable5GThreshold,
-            enable5GPlusIcon,
-            enableShow4GForLTE
         )
         bundle.putInt(ImsModifier.BUNDLE_SELECT_SIM_ID, selectedSim.subId)
         bundle.putBoolean(ImsModifier.BUNDLE_PREFER_PERSISTENT, canUsePersistentOverride)
@@ -442,9 +501,28 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
         if (resultMsg == null) {
             // 仅在应用成功后保存配置，避免本地状态与系统状态不一致
             saveConfiguration(selectedSim.subId, map, countryMccOverride)
+            refreshVowifiPlatformAvailable(selectedSim.subId)
         }
         return resultMsg
     }
+
+    /**
+     * 检测系统层 VoWiFi 平台能力并刷新状态。Task 11.2：应用配置后调用，
+     * 若返回 false 则 UI 将 Feature.VOWIFI 开关置灰并显示“当前固件不支持”文案。
+     */
+    private suspend fun refreshVowifiPlatformAvailable(subId: Int) {
+        if (subId < 0) return
+        val available = ImsStatusReader.isWfcEnabledByPlatform(application, subId)
+        _vowifiPlatformAvailable.value = available
+        Log.i(TAG, "refreshVowifiPlatformAvailable: subId=$subId available=$available")
+    }
+
+    /**
+     * 应用运营商预设：写入 CarrierConfig（ImsModifier instrumentation）+ 数据/IMS APN（ApnModifier
+     * instrumentation），随后回读 KEY_CARRIER_VOLTE_AVAILABLE_BOOL 校验，并检测 VoWiFi 平台能力。
+     */
+    suspend fun applyCarrierProfile(profile: CarrierProfile, subId: Int): ProfileApplyResult =
+        Companion.applyCarrierProfile(application, profile, subId)
 
     /**
      * 将配置保存到 SharedPreferences 中以便下次加载。
@@ -456,7 +534,7 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
     ) {
         val prefs = application.getSharedPreferences("sim_config_$subId", Context.MODE_PRIVATE)
         val keepTikTokRandomIso = prefs.getString(TIKTOK_RANDOM_ISO_PREF_KEY, null)
-        val tiktokEnabled = (map[Feature.TIKTOK_NETWORK_FIX]?.data as? Boolean) == true
+        val tiktokEnabled = false
         prefs.edit {
             clear() // 清除旧配置
             map.forEach { (feature, value) ->
@@ -1138,8 +1216,6 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             "carrier_supports_ss_over_ut_bool" to "UT补充服务",
             "carrier_cross_sim_ims_available_bool" to "跨SIM通话",
             "enable_cross_sim_calling_on_opportunistic_data_bool" to "机会数据跨 SIM 通话",
-            "vonr_enabled_bool" to "VoNR",
-            "vonr_setting_visibility_bool" to "VoNR 开关可见",
             "sim_country_iso_override_string" to "SIM ISO 覆盖",
         )
         val diagReadKeys = linkedSetOf<String>().apply {
@@ -1198,11 +1274,6 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
                 Feature.VT to "ViLTE",
                 Feature.CROSS_SIM to "跨SIM通话",
                 Feature.UT to "UT补充服务",
-                Feature.VONR to "VoNR",
-                Feature.FIVE_G_NR to "5G NR",
-                Feature.FIVE_G_PLUS_ICON to "5GA/5G+ 图标",
-                Feature.SHOW_4G_FOR_LTE to "LTE显示为4G",
-                Feature.TIKTOK_NETWORK_FIX to "TikTok 修复",
             )
             rows.forEach { (feature, label) ->
                 val appEnabled = appFeatureMap[feature]?.data as? Boolean

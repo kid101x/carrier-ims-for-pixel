@@ -39,12 +39,6 @@ enum class Feature(
         R.string.vt_desc,
         true,
     ),
-    VONR(
-        FeatureValueType.BOOLEAN,
-        R.string.vonr,
-        R.string.vonr_desc,
-        true,
-    ),
     CROSS_SIM(
         FeatureValueType.BOOLEAN,
         R.string.cross_sim,
@@ -56,36 +50,6 @@ enum class Feature(
         R.string.ut,
         R.string.ut_desc,
         true,
-    ),
-    FIVE_G_NR(
-        FeatureValueType.BOOLEAN,
-        R.string._5g_nr,
-        R.string._5g_nr_desc,
-        true,
-    ),
-    FIVE_G_THRESHOLDS(
-        FeatureValueType.BOOLEAN,
-        R.string._5g_thresholds,
-        R.string._5g_thresholds_desc,
-        true,
-    ),
-    FIVE_G_PLUS_ICON(
-        FeatureValueType.BOOLEAN,
-        R.string._5g_plus_icon,
-        R.string._5g_plus_icon_desc,
-        true,
-    ),
-    SHOW_4G_FOR_LTE(
-        FeatureValueType.BOOLEAN,
-        R.string.show_4g_for_lte,
-        R.string.show_4g_for_lte_desc,
-        false,
-    ),
-    TIKTOK_NETWORK_FIX(
-        FeatureValueType.BOOLEAN,
-        R.string.tiktok_network_fix,
-        R.string.tiktok_network_fix_desc,
-        false,
     ),
 }
 

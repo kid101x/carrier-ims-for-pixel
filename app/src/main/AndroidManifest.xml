@@ -29,6 +29,10 @@
             android:name="io.github.vvb2060.ims.ui.DumpActivity"
             android:exported="false"
             android:theme="@style/Theme.TurbolIms" />
+        <activity
+            android:name="io.github.vvb2060.ims.ui.CarrierProfileActivity"
+            android:exported="false"
+            android:theme="@style/Theme.TurbolIms" />
 
         <service
             android:name="io.github.vvb2060.ims.tiles.SIM1VoLTETileService"
@@ -42,30 +46,9 @@
             <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
         </service>
         <service
-            android:name="io.github.vvb2060.ims.tiles.SIM2VoLTETileService"
-            android:exported="true"
-            android:label="@string/qs_toggle_tile_title_sim_2"
-            android:icon="@mipmap/ic_launcher"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-            <meta-data android:name="android.service.quicksettings.TOGGLEABLE_TILE" android:value="true" />
-        </service>
-        <service
             android:name="io.github.vvb2060.ims.tiles.SIM1IMSStatusTileService"
             android:exported="true"
             android:label="@string/qs_status_tile_title_sim_1"
-            android:icon="@mipmap/ic_launcher"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
-        <service
-            android:name="io.github.vvb2060.ims.tiles.SIM2IMSStatusTileService"
-            android:exported="true"
-            android:label="@string/qs_status_tile_title_sim_2"
             android:icon="@mipmap/ic_launcher"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>

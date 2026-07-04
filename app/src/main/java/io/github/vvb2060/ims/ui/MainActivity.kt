@@ -143,8 +143,6 @@ import io.github.vvb2060.ims.model.SystemInfo
 import io.github.vvb2060.ims.privileged.ImsModifier
 import io.github.vvb2060.ims.tiles.SIM1IMSStatusTileService
 import io.github.vvb2060.ims.tiles.SIM1VoLTETileService
-import io.github.vvb2060.ims.tiles.SIM2IMSStatusTileService
-import io.github.vvb2060.ims.tiles.SIM2VoLTETileService
 import io.github.vvb2060.ims.viewmodel.MainViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -227,23 +225,14 @@ private val countryIsoOptions = listOf(
     CountryIsoOption(COUNTRY_ISO_OPTION_OTHER, null, null, R.string.country_iso_option_other),
 )
 
-private val fiveGFeatureSet = setOf(
-    Feature.FIVE_G_NR,
-    Feature.FIVE_G_THRESHOLDS,
-    Feature.FIVE_G_PLUS_ICON,
-    Feature.VONR,
-)
-
 private val fourGFeatureSet = setOf(
     Feature.VOLTE,
-    Feature.SHOW_4G_FOR_LTE,
 )
 
 private fun switchFeatureCategoryOrder(feature: Feature): Int {
     return when {
-        fiveGFeatureSet.contains(feature) -> 0
-        fourGFeatureSet.contains(feature) -> 1
-        else -> 2
+        fourGFeatureSet.contains(feature) -> 0
+        else -> 1
     }
 }
 
@@ -479,6 +468,7 @@ class MainActivity : BaseActivity() {
         val shizukuStatus by viewModel.shizukuStatus.collectAsStateWithLifecycle()
         val allSimList by viewModel.allSimList.collectAsStateWithLifecycle()
         val issueFailureLogs by viewModel.issueFailureLogs.collectAsStateWithLifecycle()
+        val vowifiPlatformAvailable by viewModel.vowifiPlatformAvailable.collectAsStateWithLifecycle()
         val uriHandler = LocalUriHandler.current
         val clipboardManager = context.getSystemService(ClipboardManager::class.java)
 
@@ -1073,7 +1063,7 @@ class MainActivity : BaseActivity() {
                         onFeatureSwitchChange = { feature, value ->
                             handleFeatureSwitchChange(selectedSim, feature, value)
                         },
-                        showTikTokFix = false,
+                        vowifiPlatformAvailable = vowifiPlatformAvailable,
                         onTextFeatureCommit = { _ ->
                             scope.launch {
                                 if (applyingConfiguration) return@launch
@@ -1173,13 +1163,8 @@ class MainActivity : BaseActivity() {
                                     enableVoLTE = (mapToDump[Feature.VOLTE]?.data ?: true) as Boolean,
                                     enableVoWiFi = (mapToDump[Feature.VOWIFI]?.data ?: true) as Boolean,
                                     enableVT = (mapToDump[Feature.VT]?.data ?: true) as Boolean,
-                                    enableVoNR = (mapToDump[Feature.VONR]?.data ?: true) as Boolean,
                                     enableCrossSIM = (mapToDump[Feature.CROSS_SIM]?.data ?: true) as Boolean,
                                     enableUT = (mapToDump[Feature.UT]?.data ?: true) as Boolean,
-                                    enable5GNR = (mapToDump[Feature.FIVE_G_NR]?.data ?: true) as Boolean,
-                                    enable5GThreshold = (mapToDump[Feature.FIVE_G_THRESHOLDS]?.data ?: true) as Boolean,
-                                    enable5GPlusIcon = (mapToDump[Feature.FIVE_G_PLUS_ICON]?.data ?: true) as Boolean,
-                                    enableShow4GForLTE = (mapToDump[Feature.SHOW_4G_FOR_LTE]?.data ?: false) as Boolean,
                                 )
                                 val snapshotText = buildEditableConfigSnapshotText(
                                     selectedSim = sim,
@@ -1236,6 +1221,13 @@ class MainActivity : BaseActivity() {
                             }
                         },
                     )
+                    CarrierProfileEntryCard(
+                        onClick = {
+                            startActivity(
+                                Intent(this@MainActivity, CarrierProfileActivity::class.java)
+                            )
+                        },
+                    )
                 }
                 if (selectedTab == MainTab.EXTRA) {
                     val extraSimList = allSimList.filter { it.subId >= 0 }
@@ -1244,7 +1236,6 @@ class MainActivity : BaseActivity() {
                         shizukuStatus = shizukuStatus,
                         selectedSim = extraSelectedSim,
                         allSimList = extraSimList,
-                        tiktokEnabled = (featureSwitches[Feature.TIKTOK_NETWORK_FIX]?.data as? Boolean) == true,
                         featureSwitchesEnabled = !applyingConfiguration,
                         checkingCaptivePortalStatus = checkingCaptivePortalStatus,
                         fixingCaptivePortal = fixingCaptivePortal,
@@ -1256,13 +1247,6 @@ class MainActivity : BaseActivity() {
                         onSelectSim = { selectedSim = it },
                         onRefreshSimList = refreshSimListAction,
                         onFixCaptivePortal = fixCaptivePortalAction,
-                        onTikTokFixChange = { enabled ->
-                            handleFeatureSwitchChange(
-                                extraSelectedSim,
-                                Feature.TIKTOK_NETWORK_FIX,
-                                FeatureValue(enabled, FeatureValueType.BOOLEAN)
-                            )
-                        },
                         onCheckNetworkExit = {
                             if (networkExitChecking) return@ExtraToolsPage
                             scope.launch {
@@ -1871,7 +1855,6 @@ private fun ExtraToolsPage(
     shizukuStatus: ShizukuStatus,
     selectedSim: SimSelection?,
     allSimList: List<SimSelection>,
-    tiktokEnabled: Boolean,
     featureSwitchesEnabled: Boolean,
     checkingCaptivePortalStatus: Boolean,
     fixingCaptivePortal: Boolean,
@@ -1883,7 +1866,6 @@ private fun ExtraToolsPage(
     onSelectSim: (SimSelection) -> Unit,
     onRefreshSimList: () -> Unit,
     onFixCaptivePortal: () -> Unit,
-    onTikTokFixChange: (Boolean) -> Unit,
     onCheckNetworkExit: () -> Unit,
     onOpenApnSettings: () -> Unit,
     onPrepareApn: () -> Unit,
@@ -1927,12 +1909,6 @@ private fun ExtraToolsPage(
         status = networkExitStatus,
         error = networkExitError,
         onCheck = onCheckNetworkExit,
-    )
-    TiktokFixCard(
-        enabled = tiktokEnabled,
-        available = isDomestic,
-        switchEnabled = featureSwitchesEnabled && (selectedSim?.subId ?: -1) >= 0,
-        onCheckedChange = onTikTokFixChange,
     )
     QuickSettingsGuideCard(onAddQuickTile = onAddQuickTile)
     ConfigBackupCard(
@@ -1979,26 +1955,13 @@ private fun RegionCompatibilityCard(
                 stringResource(R.string.region_mainland_sim),
                 stringResource(if (isDomestic) R.string.region_status_yes else R.string.region_status_no),
             )
-            KeyValueRow(
-                stringResource(R.string.region_tiktok_applicable),
-                stringResource(
-                    if (isDomestic) {
-                        R.string.region_status_applicable
-                    } else {
-                        R.string.region_status_not_applicable
-                    }
-                ),
-            )
         }
     }
 }
 
 @Composable
-private fun TiktokFixCard(
-    enabled: Boolean,
-    available: Boolean,
-    switchEnabled: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+private fun CarrierProfileEntryCard(
+    onClick: () -> Unit,
 ) {
     Card(
         modifier = Modifier
@@ -2006,17 +1969,21 @@ private fun TiktokFixCard(
             .padding(horizontal = 16.dp)
             .padding(bottom = 16.dp)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            BooleanFeatureItem(
-                title = stringResource(R.string.tiktok_network_fix),
-                description = if (available) {
-                    stringResource(R.string.tiktok_network_fix_desc)
-                } else {
-                    stringResource(R.string.tiktok_network_fix_unavailable)
-                },
-                checked = enabled && available,
-                enabled = switchEnabled && available,
-                onCheckedChange = onCheckedChange,
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(16.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.carrier_profile_title),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = stringResource(R.string.carrier_profile_apply),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.outline,
             )
         }
     }
@@ -2165,28 +2132,6 @@ private fun QuickSettingsGuideCard(
                         onAddQuickTile(
                             SIM1IMSStatusTileService::class.java,
                             R.string.qs_status_tile_title_sim_1
-                        )
-                    },
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                QuickTileButton(
-                    label = stringResource(R.string.qs_add_volte_sim_2),
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        onAddQuickTile(
-                            SIM2VoLTETileService::class.java,
-                            R.string.qs_toggle_tile_title_sim_2
-                        )
-                    },
-                )
-                QuickTileButton(
-                    label = stringResource(R.string.qs_add_ims_sim_2),
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        onAddQuickTile(
-                            SIM2IMSStatusTileService::class.java,
-                            R.string.qs_status_tile_title_sim_2
                         )
                     },
                 )
@@ -3439,7 +3384,7 @@ fun FeaturesCard(
     resetFeatures: () -> Unit,
     onDumpConfig: () -> Unit,
     onRunDiagnostics: () -> Unit,
-    showTikTokFix: Boolean = true,
+    vowifiPlatformAvailable: Boolean = true,
 ) {
     Card(
         modifier = Modifier
@@ -3527,9 +3472,6 @@ fun FeaturesCard(
 
             val showFeatures = Feature.entries.toMutableList().apply {
                 removeAll { it.valueType == FeatureValueType.STRING }
-                if (!showTikTokFix || isSelectAllSim || !isChinaDomesticSim(selectedSim)) {
-                    remove(Feature.TIKTOK_NETWORK_FIX)
-                }
             }
             val orderedFeatures = showFeatures.sortedWith(
                 compareBy<Feature>(
@@ -3665,11 +3607,16 @@ fun FeaturesCard(
                     }
 
                     FeatureValueType.BOOLEAN -> {
+                        val vowifiUnavailable = feature == Feature.VOWIFI && !vowifiPlatformAvailable
                         BooleanFeatureItem(
                             title = title,
-                            description = description,
+                            description = if (vowifiUnavailable) {
+                                stringResource(R.string.carrier_profile_vowifi_unavailable)
+                            } else {
+                                description
+                            },
                             checked = (featureSwitches[feature]?.data ?: feature.defaultValue) as Boolean,
-                            enabled = featureSwitchesEnabled,
+                            enabled = featureSwitchesEnabled && !vowifiUnavailable,
                             onCheckedChange = {
                                 onFeatureSwitchChange(
                                     feature,

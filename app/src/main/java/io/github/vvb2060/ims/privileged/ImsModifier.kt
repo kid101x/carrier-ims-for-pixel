@@ -4,37 +4,23 @@ import android.app.Activity
 import android.app.IActivityManager
 import android.app.Instrumentation
 import android.content.Context
-import android.os.Build
 import android.os.Bundle
 import android.os.PersistableBundle
 import android.os.ServiceManager
 import android.system.Os
 import android.telephony.CarrierConfigManager
 import android.telephony.SubscriptionManager
-import android.telephony.TelephonyManager
 import android.util.Log
-import com.android.internal.telephony.ITelephony
 import io.github.vvb2060.ims.LogcatRepository
+import io.github.vvb2060.ims.model.CarrierProfile
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuBinderWrapper
 
 class ImsModifier : Instrumentation() {
     companion object Companion {
         private const val TAG = "ImsModifier"
-        private const val KEY_NR_ADVANCED_THRESHOLD_BANDWIDTH_KHZ = "nr_advanced_threshold_bandwidth_khz_int"
-        private const val KEY_ADDITIONAL_NR_ADVANCED_BANDS = "additional_nr_advanced_bands_int_array"
-        private const val KEY_5G_ICON_CONFIGURATION = "5g_icon_configuration_string"
-        private const val KEY_NR_ADVANCED_CAPABLE_PCO_ID = "nr_advanced_capable_pco_id_int"
-        private const val KEY_INCLUDE_LTE_FOR_NR_ADVANCED_THRESHOLD_BANDWIDTH =
-            "include_lte_for_nr_advanced_threshold_bandwidth_bool"
-        private const val NR_ADVANCED_THRESHOLD_KHZ_FOR_5GA = 110_000
-        private const val NR_ICON_CONFIGURATION_5GA =
-            "connected_mmwave:5G_Plus,connected:5G,connected_rrc_idle:5G,not_restricted_rrc_idle:5G,not_restricted_rrc_con:5G"
         private const val BUNDLE_COUNTRY_MCC_OVERRIDE = "country_mcc_override"
         private const val BUNDLE_COUNTRY_MNC_HINT = "country_mnc_hint"
-        private val NR_ADVANCED_BANDS_FOR_CHINA = intArrayOf(
-            1, 3, 8, 28, 41, 78, 79
-        )
         const val BUNDLE_SELECT_SIM_ID = "select_sim_id"
         const val BUNDLE_RESET = "reset"
         const val BUNDLE_PREFER_PERSISTENT = "prefer_persistent"
@@ -53,13 +39,8 @@ class ImsModifier : Instrumentation() {
             enableVoLTE: Boolean,
             enableVoWiFi: Boolean,
             enableVT: Boolean,
-            enableVoNR: Boolean,
             enableCrossSIM: Boolean,
             enableUT: Boolean,
-            enable5GNR: Boolean,
-            enable5GThreshold: Boolean,
-            enable5GPlusIcon: Boolean,
-            enableShow4GForLTE: Boolean,
         ): Bundle {
             val bundle = Bundle()
             // 运营商名称
@@ -68,15 +49,8 @@ class ImsModifier : Instrumentation() {
                 bundle.putString(CarrierConfigManager.KEY_CARRIER_NAME_STRING, carrierName)
                 bundle.putString(CarrierConfigManager.KEY_CARRIER_CONFIG_VERSION_STRING, ":3")
             }
-            // 运营商国家码
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                if (countryISO?.isNotBlank() == true) {
-                    bundle.putString(
-                        CarrierConfigManager.KEY_SIM_COUNTRY_ISO_OVERRIDE_STRING,
-                        countryISO
-                    )
-                }
-            }
+            // 国家码覆盖走 CarrierConfig 私有 key（Android 10 无 KEY_SIM_COUNTRY_ISO_OVERRIDE_STRING，
+            // 该 key 为 Android 14+ 才存在，整体跳过写入）。
             normalizeMccForOverride(countryMcc)?.let {
                 bundle.putString(BUNDLE_COUNTRY_MCC_OVERRIDE, it)
             }
@@ -89,11 +63,6 @@ class ImsModifier : Instrumentation() {
                 bundle.putBoolean(CarrierConfigManager.KEY_EDITABLE_ENHANCED_4G_LTE_BOOL, true)
                 bundle.putBoolean(CarrierConfigManager.KEY_HIDE_ENHANCED_4G_LTE_BOOL, false)
                 bundle.putBoolean(CarrierConfigManager.KEY_HIDE_LTE_PLUS_DATA_ICON_BOOL, false)
-            }
-
-            // LTE 显示为 4G
-            if (enableShow4GForLTE) {
-                bundle.putBoolean("show_4g_for_lte_data_icon_bool", true)
             }
 
             // VT (视频通话) 配置
@@ -133,48 +102,40 @@ class ImsModifier : Instrumentation() {
                 bundle.putInt("wfc_spn_format_idx_int", 6)
             }
 
-            // VoNR (5G 语音) 配置
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                if (enableVoNR) {
-                    bundle.putBoolean(CarrierConfigManager.KEY_VONR_ENABLED_BOOL, true)
-                    bundle.putBoolean(CarrierConfigManager.KEY_VONR_SETTING_VISIBILITY_BOOL, true)
-                }
-            }
+            return bundle
+        }
 
-            // 5G NR 配置
-            if (enable5GNR) {
-                bundle.putIntArray(
-                    CarrierConfigManager.KEY_CARRIER_NR_AVAILABILITIES_INT_ARRAY,
-                    intArrayOf(
-                        CarrierConfigManager.CARRIER_NR_AVAILABILITY_NSA,
-                        CarrierConfigManager.CARRIER_NR_AVAILABILITY_SA
-                    )
-                )
-                if (enable5GPlusIcon) {
-                    // 5GA / 5G+ 图标判定逻辑：
-                    // 1) 只有达到较高 NR 聚合带宽（这里使用 110MHz）才进入 NR Advanced；
-                    // 2) 将 NR Advanced 对应状态映射到 5G_Plus 图标；
-                    // 3) 补充常见国内 NR 频段，避免 Sub-6 场景因非毫米波而无法进入高级图标状态。
-                    bundle.putInt(KEY_NR_ADVANCED_THRESHOLD_BANDWIDTH_KHZ, NR_ADVANCED_THRESHOLD_KHZ_FOR_5GA)
-                    bundle.putBoolean(
-                        KEY_INCLUDE_LTE_FOR_NR_ADVANCED_THRESHOLD_BANDWIDTH,
-                        false
-                    )
-                    bundle.putIntArray(KEY_ADDITIONAL_NR_ADVANCED_BANDS, NR_ADVANCED_BANDS_FOR_CHINA)
-                    bundle.putString(KEY_5G_ICON_CONFIGURATION, NR_ICON_CONFIGURATION_5GA)
-                    // 将 PCO 约束置零，避免被运营商 PCO gate 阻断 NR Advanced 图标显示。
-                    bundle.putInt(KEY_NR_ADVANCED_CAPABLE_PCO_ID, 0)
-                }
-                if (enable5GThreshold) {
-                    bundle.putIntArray(
-                        CarrierConfigManager.KEY_5G_NR_SSRSRP_THRESHOLDS_INT_ARRAY,  // Boundaries: [-140 dBm, -44 dBm]
-                        intArrayOf(
-                            -128,  /* SIGNAL_STRENGTH_POOR */
-                            -118,  /* SIGNAL_STRENGTH_MODERATE */
-                            -108,  /* SIGNAL_STRENGTH_GOOD */
-                            -98,  /* SIGNAL_STRENGTH_GREAT */
-                        )
-                    )
+        /**
+         * 基于 [CarrierProfile] 构建 Bundle：先调用底层 [buildBundle] 写入通用 VoLTE/VoWiFi/VT/UT/CrossSIM
+         * 开关，再遍历 [CarrierProfile.carrierConfigKeys] 注入运营商专属键值。
+         */
+        fun buildBundle(
+            profile: CarrierProfile,
+            enableVoLTE: Boolean,
+            enableVoWiFi: Boolean,
+            enableVT: Boolean,
+            enableUT: Boolean,
+            enableCrossSIM: Boolean,
+        ): Bundle {
+            val bundle = buildBundle(
+                carrierName = profile.name,
+                countryISO = null,
+                countryMcc = profile.mcc,
+                countryMncHint = profile.mnc,
+                enableVoLTE = enableVoLTE,
+                enableVoWiFi = enableVoWiFi,
+                enableVT = enableVT,
+                enableCrossSIM = enableCrossSIM,
+                enableUT = enableUT,
+            )
+            profile.carrierConfigKeys.forEach { (key, value) ->
+                when (value) {
+                    is Boolean -> bundle.putBoolean(key, value)
+                    is Int -> bundle.putInt(key, value)
+                    is String -> bundle.putString(key, value)
+                    is Long -> bundle.putLong(key, value)
+                    is IntArray -> bundle.putIntArray(key, value)
+                    else -> Log.w(TAG, "buildBundle(profile): unsupported type for key $key: ${value.javaClass.name}")
                 }
             }
             return bundle
@@ -260,10 +221,8 @@ class ImsModifier : Instrumentation() {
             arguments.remove(BUNDLE_RESET)
             val preferPersistent = arguments.getBoolean(BUNDLE_PREFER_PERSISTENT, false)
             arguments.remove(BUNDLE_PREFER_PERSISTENT)
-            val countryMccOverride = arguments.getString(BUNDLE_COUNTRY_MCC_OVERRIDE)
-            arguments.remove(BUNDLE_COUNTRY_MCC_OVERRIDE)
-            val countryMncHint = arguments.getString(BUNDLE_COUNTRY_MNC_HINT)
-            arguments.remove(BUNDLE_COUNTRY_MNC_HINT)
+            // BUNDLE_COUNTRY_MCC_OVERRIDE / BUNDLE_COUNTRY_MNC_HINT 保留在 Bundle 中，
+            // 通过 CarrierConfig 私有 key 路径写入（Android 10 不支持 setCarrierTestOverride）。
             val baseValues = if (reset) null else arguments.toPersistableBundle()
             for (subId in subIds) {
                 val values = baseValues?.let { PersistableBundle(it) }
@@ -274,11 +233,6 @@ class ImsModifier : Instrumentation() {
                     values,
                     preferPersistent = preferPersistent
                 )
-                if (reset) {
-                    clearCarrierTestOverride(subId)
-                } else if (!countryMccOverride.isNullOrBlank()) {
-                    applyCarrierTestMccOverride(subId, countryMccOverride, countryMncHint)
-                }
             }
         } finally {
             am.stopDelegateShellPermissionIdentity()
@@ -323,7 +277,8 @@ class ImsModifier : Instrumentation() {
         values: PersistableBundle?,
         persistent: Boolean,
     ) {
-        // 使用反射调用 overrideConfig
+        // 使用反射调用 overrideConfig：Android 11+ 有三参版（带 persistent），
+        // Android 10 仅有两参版，NoSuchMethodException 时回退。
         try {
             cm.javaClass.getMethod(
                 "overrideConfig",
@@ -338,115 +293,6 @@ class ImsModifier : Instrumentation() {
                 PersistableBundle::class.java
             ).invoke(cm, subId, values)
         }
-    }
-
-    @Throws(Exception::class)
-    private fun applyCarrierTestMccOverride(
-        subId: Int,
-        mccOverrideRaw: String,
-        mncHintRaw: String?,
-    ) {
-        val normalizedMcc = mccOverrideRaw.filter { it.isDigit() }.take(3)
-        if (normalizedMcc.length != 3) {
-            Log.w(TAG, "skip carrier test override: invalid MCC=$mccOverrideRaw")
-            return
-        }
-        val normalizedMnc = mncHintRaw
-            ?.filter { it.isDigit() }
-            ?.take(3)
-            ?.takeIf { it.length in 2..3 }
-            ?: resolveCurrentMnc(subId)
-            ?: throw IllegalStateException("unable to resolve MNC for subId=$subId")
-        val mccmnc = normalizedMcc + normalizedMnc
-        val binder = ServiceManager.getService(Context.TELEPHONY_SERVICE)
-            ?: throw IllegalStateException("phone service unavailable")
-        val telephony = ITelephony.Stub.asInterface(ShizukuBinderWrapper(binder))
-            ?: throw IllegalStateException("ITelephony unavailable")
-        Log.i(TAG, "setCarrierTestOverride for subId=$subId mccmnc=$mccmnc")
-        telephony.setCarrierTestOverride(
-            subId,
-            mccmnc,
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            null,
-            null
-        )
-    }
-
-    @Throws(Exception::class)
-    private fun clearCarrierTestOverride(subId: Int) {
-        val binder = ServiceManager.getService(Context.TELEPHONY_SERVICE)
-            ?: throw IllegalStateException("phone service unavailable")
-        val telephony = ITelephony.Stub.asInterface(ShizukuBinderWrapper(binder))
-            ?: throw IllegalStateException("ITelephony unavailable")
-
-        val clearMethod = runCatching {
-            telephony.javaClass.getMethod("clearCarrierTestOverride", Int::class.javaPrimitiveType)
-        }.getOrNull()
-
-        if (clearMethod != null) {
-            Log.i(TAG, "clearCarrierTestOverride for subId=$subId")
-            clearMethod.invoke(telephony, subId)
-            return
-        }
-
-        val currentMccMnc = resolveActiveSubscriptionMccMnc(subId)
-        if (currentMccMnc.isNullOrBlank()) {
-            Log.w(
-                TAG,
-                "clearCarrierTestOverride unavailable and unable to resolve MCCMNC for subId=$subId; skip fallback to avoid empty operator override"
-            )
-            return
-        }
-
-        Log.i(
-            TAG,
-            "clearCarrierTestOverride unavailable, fallback setCarrierTestOverride(current=$currentMccMnc) for subId=$subId"
-        )
-        telephony.setCarrierTestOverride(
-            subId,
-            currentMccMnc,
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            null,
-            null
-        )
-    }
-
-    private fun resolveActiveSubscriptionMccMnc(subId: Int): String? {
-        val sm = context.getSystemService(SubscriptionManager::class.java) ?: return null
-        val info = sm.activeSubscriptionInfoList?.firstOrNull { it.subscriptionId == subId } ?: return null
-
-        val mcc = info.mccString
-            ?.filter { it.isDigit() }
-            ?.takeIf { it.length == 3 }
-            ?: info.mcc.takeIf { it in 0..999 }?.toString()?.padStart(3, '0')
-
-        val mnc = info.mncString
-            ?.filter { it.isDigit() }
-            ?.takeIf { it.length in 2..3 }
-            ?: info.mnc.takeIf { it in 0..999 }?.toString()?.padStart(2, '0')
-
-        return if (mcc != null && mnc != null) mcc + mnc else null
-    }
-
-    private fun resolveCurrentMnc(subId: Int): String? {
-        val telephony = context.getSystemService(TelephonyManager::class.java) ?: return null
-        val bySub = telephony.createForSubscriptionId(subId).simOperator.orEmpty()
-        val operator = bySub.filter { it.isDigit() }
-        if (operator.length >= 5) {
-            return operator.substring(3)
-        }
-        val fallback = telephony.simOperator.orEmpty().filter { it.isDigit() }
-        return if (fallback.length >= 5) fallback.substring(3) else null
     }
 
     @Suppress("UNCHECKED_CAST", "DEPRECATION")

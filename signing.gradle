@@ -1,17 +1,39 @@
+// Pixel 1 分支签名配置：
+// 1. 优先读 local.properties 中的正式签名（与上游一致）
+// 2. 其次读环境变量
+// 3. 都缺失时回退到 Android 默认 debug 签名（~/.android/debug.keystore，AGP 自动生成）
+//    —— 用户明确说明"用 Android Studio 默认 debug 签名构建即可"
+
 def kFile = rootProject.file('local.properties')
 def props = new Properties()
+def signingStoreFile = null
+def signingStorePassword = null
+def signingKeyAlias = null
+def signingKeyPassword = null
+
 if (kFile.canRead()) {
     props.load(new FileInputStream(kFile))
+    signingStoreFile = props['SIGN_KEY_STORE_FILE']
+    signingStorePassword = props['SIGN_KEY_STORE_PASSWORD']
+    signingKeyAlias = props['SIGN_KEY_ALIAS']
+    signingKeyPassword = props['SIGN_KEY_PASSWORD']
+}
+if (signingStoreFile == null) {
+    signingStoreFile = System.getenv('SIGN_KEY_STORE_FILE')
+    signingStorePassword = System.getenv('SIGN_KEY_STORE_PASSWORD')
+    signingKeyAlias = System.getenv('SIGN_KEY_ALIAS')
+    signingKeyPassword = System.getenv('SIGN_KEY_PASSWORD')
+}
 
-    if (props != null) {
-        android.signingConfigs.sign.storeFile file(props['SIGN_KEY_STORE_FILE'])
-        android.signingConfigs.sign.storePassword props['SIGN_KEY_STORE_PASSWORD']
-        android.signingConfigs.sign.keyAlias props['SIGN_KEY_ALIAS']
-        android.signingConfigs.sign.keyPassword props['SIGN_KEY_PASSWORD']
-    }
+if (signingStoreFile != null) {
+    android.signingConfigs.sign.storeFile file(signingStoreFile)
+    android.signingConfigs.sign.storePassword signingStorePassword
+    android.signingConfigs.sign.keyAlias signingKeyAlias
+    android.signingConfigs.sign.keyPassword signingKeyPassword
 } else {
-    android.signingConfigs.sign.storeFile file(System.getenv('SIGN_KEY_STORE_FILE'))
-    android.signingConfigs.sign.storePassword System.getenv('SIGN_KEY_STORE_PASSWORD')
-    android.signingConfigs.sign.keyAlias System.getenv('SIGN_KEY_ALIAS')
-    android.signingConfigs.sign.keyPassword System.getenv('SIGN_KEY_PASSWORD')
+    // 回退到 AGP 内置 debug 签名（与 Android Studio 默认 debug 一致）
+    android.signingConfigs.sign.storeFile android.signingConfigs.debug.storeFile
+    android.signingConfigs.sign.storePassword android.signingConfigs.debug.storePassword
+    android.signingConfigs.sign.keyAlias android.signingConfigs.debug.keyAlias
+    android.signingConfigs.sign.keyPassword android.signingConfigs.debug.keyPassword
 }

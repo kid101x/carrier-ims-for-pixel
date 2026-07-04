@@ -116,27 +116,13 @@
     <string name="vowifi_desc">启用WiFi通话（需运营商支持）</string>
     <string name="vt">ViLTE（视频通话）</string>
     <string name="vt_desc">启用视频通话（需运营商支持）</string>
-    <string name="vonr">VoNR（5G 语音）</string>
-    <string name="vonr_desc">启用5G语音通话（需运营商支持）</string>
     <string name="cross_sim">跨 SIM 通话</string>
     <string name="cross_sim_desc">启用跨SIM通话（需运营商支持）</string>
     <string name="ut">UT 补充服务</string>
     <string name="ut_desc">启用呼叫等待/转移等业务（需运营商支持）</string>
-    <string name="_5g_nr">5G NR（NSA/SA）</string>
-    <string name="_5g_nr_desc">启用 5G 网络（非独立/独立组网）</string>
-    <string name="_5g_thresholds">5G信号强度调整</string>
-    <string name="_5g_thresholds_desc">5G信号强度调整为匹配中国大陆阈值</string>
-    <string name="_5g_plus_icon">5GA/5G+ 图标显示</string>
-    <string name="_5g_plus_icon_desc">适配中国大陆5GA信号</string>
-    <string name="show_4g_for_lte">LTE显示为4G</string>
-    <string name="show_4g_for_lte_desc">LTE 网络显示为 4G 图标</string>
-    <string name="tiktok_network_fix">修复 TikTok 无网络</string>
-    <string name="tiktok_network_fix_desc">仅大陆SIM有此选项，海外SIM无需修复</string>
-    <string name="tiktok_network_fix_unavailable">仅大陆 SIM 适用</string>
     <string name="extra_requires_shizuku_title">需要 Shizuku</string>
     <string name="region_compat_title">区域兼容状态</string>
     <string name="region_mainland_sim">大陆 SIM</string>
-    <string name="region_tiktok_applicable">TikTok 修复</string>
     <string name="region_status_yes">是</string>
     <string name="region_status_no">否</string>
     <string name="region_status_applicable">适用</string>
@@ -166,8 +152,6 @@
     <string name="qs_guide_desc">添加到系统快捷设置，便于快速查看或切换。</string>
     <string name="qs_add_volte_sim_1">VoLTE SIM 1</string>
     <string name="qs_add_ims_sim_1">IMS SIM 1</string>
-    <string name="qs_add_volte_sim_2">VoLTE SIM 2</string>
-    <string name="qs_add_ims_sim_2">IMS SIM 2</string>
     <string name="qs_tile_added">快捷开关已添加</string>
     <string name="qs_tile_already_added">快捷开关已存在</string>
     <string name="qs_tile_not_added">未添加快捷开关</string>
@@ -269,7 +253,7 @@
     <string name="sim_list_refresh_failed_restart_shizuku">SIM卡读取失败，请重启 Shizuku 服务后再刷新</string>
     <string name="config_apply_in_progress">正在应用配置…</string>
     <string name="config_apply_success_title">配置已应用</string>
-    <string name="config_apply_success_message">配置已生效。\n如当前连接 Wi-Fi，请先关闭 Wi-Fi 再观察 5G/5G+ 图标并测试移动数据。</string>
+    <string name="config_apply_success_message">配置已生效。\n如当前连接 Wi-Fi，请先关闭 Wi-Fi 再观察 VoLTE 图标并测试移动数据。</string>
     <string name="config_apply_failed_title">应用失败</string>
     <string name="config_success_message">配置已应用！</string>
     <string name="config_success_reset_message">配置已重置！</string>
@@ -309,11 +293,20 @@
     <string name="dump_error">导出失败：%s</string>
     <string name="dump_filter_label">筛选（键/值）</string>
 
+    <!-- Carrier Profile -->
+    <string name="carrier_profile_title">运营商配置</string>
+    <string name="carrier_profile_apply">应用预设</string>
+    <string name="carrier_profile_experimental_warning">此预设为实验性。Pixel 1（Android 10）下电信运营商可能不支持 VoLTE IMS 注册，是否继续？</string>
+    <string name="carrier_profile_apply_success">预设已应用，VoLTE 已可用。</string>
+    <string name="carrier_profile_apply_failed">预设应用失败：写入后 VoLTE 仍不可用。</string>
+    <string name="carrier_profile_vowifi_unavailable">当前固件不支持 VoWiFi 平台能力。</string>
+    <string name="carrier_profile_data_apn_label">数据 APN</string>
+    <string name="carrier_profile_ims_apn_label">IMS APN</string>
+    <string name="carrier_profile_carrier_config_label">CarrierConfig 键</string>
+
     <!-- QS Tiles -->
     <string name="qs_toggle_tile_title_sim_1">VoLTE 开关（SIM 1）</string>
-    <string name="qs_toggle_tile_title_sim_2">VoLTE 开关（SIM 2）</string>
     <string name="qs_status_tile_title_sim_1">IMS 状态（SIM 1）</string>
-    <string name="qs_status_tile_title_sim_2">IMS 状态（SIM 2）</string>
 
     <!-- Logcat -->
     <string name="title_filter_log_level">请选择日志过滤等级</string>

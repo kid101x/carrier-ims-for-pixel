@@ -9,7 +9,6 @@ import android.os.Bundle
 import android.os.ServiceManager
 import android.system.Os
 import android.telephony.SubscriptionManager
-import android.telephony.TelephonyFrameworkInitializer
 import android.util.Log
 import com.android.internal.telephony.ISub
 import rikka.shizuku.ShizukuBinderWrapper
@@ -67,11 +66,9 @@ class SimReader : Instrumentation() {
 
     private fun readByISub(): List<android.telephony.SubscriptionInfo>? {
         return try {
-            val serviceRegisterer =
-                TelephonyFrameworkInitializer
-                    .getTelephonyServiceManager()
-                    .getSubscriptionServiceRegisterer()
-            val binder = serviceRegisterer?.get() ?: return null
+            // Android 10 没有 TelephonyFrameworkInitializer.getTelephonyServiceManager()，
+            // 改用 ServiceManager.getService("isub") + ShizukuBinderWrapper。
+            val binder = ServiceManager.getService("isub") ?: return null
             val sub = ISub.Stub.asInterface(ShizukuBinderWrapper(binder))
             sub.getActiveSubscriptionInfoList(null, null, true)
         } catch (e: Throwable) {
