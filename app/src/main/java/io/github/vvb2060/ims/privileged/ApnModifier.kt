@@ -67,7 +67,7 @@ class ApnModifier : Instrumentation() {
     }
 
     private fun applyApn(arguments: Bundle) {
-        val subId = arguments.getInt(BUNDLE_SELECT_SIM_ID, -1)
+        val subId = arguments.getIntCompat(BUNDLE_SELECT_SIM_ID, -1)
         val name = arguments.getString(BUNDLE_NAME).orEmpty().trim()
         val apn = arguments.getString(BUNDLE_APN).orEmpty().trim()
         val type = arguments.getString(BUNDLE_TYPE).orEmpty().trim().ifBlank { "default,supl,ims" }
@@ -112,20 +112,40 @@ class ApnModifier : Instrumentation() {
             inserted.lastPathSegment?.toLongOrNull()
                 ?: throw IllegalStateException("invalid APN id: $inserted")
         }
-        val preferValues = ContentValues().apply {
-            put("apn_id", apnId)
+        if (shouldSetPreferredApn(type)) {
+            val preferValues = ContentValues().apply {
+                put("apn_id", apnId)
+            }
+            val preferredUpdated = context.contentResolver.update(
+                Uri.parse("$PREFER_APN_URI_PREFIX$subId"),
+                preferValues,
+                null,
+                null
+            )
+            if (preferredUpdated <= 0) {
+                throw IllegalStateException("set preferred APN failed")
+            }
+        } else {
+            Log.i(TAG, "skip preferred APN for type=$type")
         }
-        val preferredUpdated = context.contentResolver.update(
-            Uri.parse("$PREFER_APN_URI_PREFIX$subId"),
-            preferValues,
-            null,
-            null
-        )
-        if (preferredUpdated <= 0) {
-            throw IllegalStateException("set preferred APN failed")
-        }
-        Log.i(TAG, "APN inserted for subId=$subId id=$apnId name=$name apn=$apn")
+        findExistingApnId(subId, numeric, apn, type)
+            ?: throw IllegalStateException("verify APN failed after write")
+        Log.i(TAG, "APN inserted for subId=$subId id=$apnId name=$name apn=$apn type=$type")
     }
+
+    @Suppress("DEPRECATION")
+    private fun Bundle.getIntCompat(key: String, defaultValue: Int): Int =
+        when (val value = get(key)) {
+            is Int -> value
+            is String -> value.toIntOrNull() ?: defaultValue
+            else -> defaultValue
+        }
+
+    private fun shouldSetPreferredApn(type: String): Boolean =
+        type.split(',').any { apnType ->
+            val normalized = apnType.trim()
+            normalized == "*" || normalized.equals("default", ignoreCase = true)
+        }
 
     private fun findExistingApnId(
         subId: Int,

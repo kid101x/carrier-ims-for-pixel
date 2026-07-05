@@ -16,6 +16,7 @@ import android.os.PersistableBundle
 import android.os.ServiceManager
 import android.provider.Settings
 import android.provider.Telephony
+import android.system.Os
 import android.telephony.CarrierConfigManager
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
@@ -642,21 +643,32 @@ class ShizukuProvider : ShizukuProvider() {
         }
 
         /**
-         * 通过 contentResolver 直接写 APN，复刻 ApnModifier 的 ContentValues 构造与
-         * update/insert + preferapn 设置逻辑。ShizukuProvider 调用经 Shizuku 路由，
-         * 拥有 shell 权限（含 WRITE_APN_SETTINGS）足以操作 telephony/carriers。
+         * Android 10 telephony provider requires WRITE_APN_SETTINGS for APN writes.
+         * A ShizukuBinderWrapper around system services does not change the identity
+         * of ordinary ContentResolver calls, so delegate shell permissions explicitly.
          */
         private suspend fun applyApnConfigViaBinder(
             context: Context,
             subId: Int,
             config: ApnDraftConfig,
         ): String? = withContext(Dispatchers.IO) {
+            val binder = ServiceManager.getService(Context.ACTIVITY_SERVICE)
+                ?: return@withContext "ActivityManager unavailable"
+            val am = IActivityManager.Stub.asInterface(ShizukuBinderWrapper(binder))
+            var delegated = false
             try {
+                am.startDelegateShellPermissionIdentity(Os.getuid(), null)
+                delegated = true
                 applyApnConfigViaBinderInternal(context, subId, config)
                 null
             } catch (t: Throwable) {
                 Log.e(TAG, "applyApnConfigViaBinder: failed: ${t.javaClass.simpleName}: ${t.message ?: "(no message)"}", t)
                 t.message ?: t.javaClass.simpleName
+            } finally {
+                if (delegated) {
+                    runCatching { am.stopDelegateShellPermissionIdentity() }
+                        .onFailure { Log.w(TAG, "applyApnConfigViaBinder: stop delegate shell identity failed", it) }
+                }
             }
         }
 
@@ -709,16 +721,31 @@ class ShizukuProvider : ShizukuProvider() {
                 inserted.lastPathSegment?.toLongOrNull()
                     ?: throw IllegalStateException("invalid APN id: $inserted")
             }
-            val preferValues = ContentValues().apply { put("apn_id", apnId) }
-            val preferredUpdated = resolver.update(
-                Uri.parse("$PREFER_APN_URI_PREFIX$subId"),
-                preferValues,
-                null,
-                null,
+            if (shouldSetPreferredApn(type)) {
+                val preferValues = ContentValues().apply { put("apn_id", apnId) }
+                val preferredUpdated = resolver.update(
+                    Uri.parse("$PREFER_APN_URI_PREFIX$subId"),
+                    preferValues,
+                    null,
+                    null,
+                )
+                if (preferredUpdated <= 0) throw IllegalStateException("set preferred APN failed")
+            } else {
+                Log.i(TAG, "applyApnConfigViaBinder: skip preferred APN for type=$type")
+            }
+            val verifiedId = findExistingApnId(resolver, apnUri, subId, numeric, apn, type)
+                ?: throw IllegalStateException("verify APN failed after write")
+            Log.i(
+                TAG,
+                "applyApnConfigViaBinder: subId=$subId id=$apnId verifiedId=$verifiedId name=$name apn=$apn type=$type",
             )
-            if (preferredUpdated <= 0) throw IllegalStateException("set preferred APN failed")
-            Log.i(TAG, "applyApnConfigViaBinder: subId=$subId id=$apnId name=$name apn=$apn")
         }
+
+        private fun shouldSetPreferredApn(type: String): Boolean =
+            type.split(',').any { apnType ->
+                val normalized = apnType.trim()
+                normalized == "*" || normalized.equals("default", ignoreCase = true)
+            }
 
         private fun findExistingApnId(
             resolver: ContentResolver,

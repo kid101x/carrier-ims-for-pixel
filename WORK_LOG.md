@@ -207,6 +207,15 @@ adb install -r app/build/outputs/apk/debug/app-4.0.0-pixel1-b9-20260704-1142.apk
 4. 若报 `SecurityException`，可能需补充权限或检查 ShizukuBinderWrapper 是否生效
 5. 若配置应用成功但通话不通，检查 `KEY_CARRIER_VOLTE_AVAILABLE_BOOL` 等键值是否真的写入
 
+## 2026-07-05 真机 ADB 复测补充
+
+- `cmd phone ims enable -s 0` 可到达 `org.codeaurora.ims`，但 Qualcomm IMS 返回 `Request turn on/off IMS failed`。
+- CarrierConfig override 已生效，LTE VOPS=1；临时打开移动数据后 default APN `3gnet` 可连接，但 `pcscf=[]`。
+- `dumpsys activity service com.android.phone` 显示 `mApnType=ims mWaitingApns={null} mApnSetting={null}`，IMS 数据通路没有候选 APN。
+- 普通 adb 不能 root，不能写 `persist.dbg.*` radio 调试属性，也不能直接访问 `content://telephony/carriers`。
+- 代码修复方向：Android 10 APN 写入路径必须显式 `startDelegateShellPermissionIdentity`；IMS-only APN 不能设置为 preferred APN；APN 写失败必须让运营商预设整体失败。
+- 详细记录见 `docs/plans/2026-07-05-pixel1-adb-volte-root-cause.md`。
+
 ## Spec 文档目录
 
 - `.trae/specs/phased-android10-fix/`：第 3 轮（ISub 签名 + 屏蔽广告）

@@ -109,14 +109,25 @@ class MainViewModel(private val application: Application) : AndroidViewModel(app
             val volteAvailable = readback
                 ?.getBoolean(CarrierConfigManager.KEY_CARRIER_VOLTE_AVAILABLE_BOOL, false) ?: false
             val vowifiPlatform = ImsStatusReader.isWfcEnabledByPlatform(app, subId)
-            Log.i(TAG, "applyCarrierProfile: subId=$subId volte=$volteAvailable vowifi=$vowifiPlatform")
+            val apnErrors = listOfNotNull(
+                apnDataError?.let { "Data APN: $it" },
+                apnImsError?.let { "IMS APN: $it" },
+            )
+            val apnErrorMessage = apnErrors.takeIf { it.isNotEmpty() }?.joinToString("; ")
+            val readbackError = if (volteAvailable) null else "CarrierConfig readback failed"
+            val errorMessage = apnErrorMessage ?: readbackError
+            Log.i(
+                TAG,
+                "applyCarrierProfile: subId=$subId volte=$volteAvailable vowifi=$vowifiPlatform" +
+                    " apnDataError=$apnDataError apnImsError=$apnImsError",
+            )
             return ProfileApplyResult(
-                success = true,
+                success = errorMessage == null,
                 volteAvailable = volteAvailable,
                 vowifiPlatformAvailable = vowifiPlatform,
                 apnDataError = apnDataError,
                 apnImsError = apnImsError,
-                errorMessage = null,
+                errorMessage = errorMessage,
             )
         }
         private const val RUNTIME_PREFS = "runtime_state"
