@@ -173,8 +173,8 @@ android {
         }
     }
     tasks.withType<Test>().configureEach {
-        // Robolectric 的 MavenArtifactFetcher 在 TestWorker JVM 里直连 Maven 下载 android-all jar，
-        // 沙箱需走 HTTP 代理 127.0.0.1:18080 才能出网。把代理传给 TestWorker。
+        // Robolectric 的 MavenArtifactFetcher 在 TestWorker JVM 里下载 android-all jar。
+        // 沙箱直连外部网络不可达，必须走 HTTP 代理 127.0.0.1:18080。
         systemProperty("http.proxyHost", "127.0.0.1")
         systemProperty("http.proxyPort", "18080")
         systemProperty("https.proxyHost", "127.0.0.1")
